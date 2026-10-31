@@ -21,7 +21,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - name: Verify preinstalled Android SDK
+        run: test -d "$ANDROID_HOME" && "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
       - run: npm install --no-audit --no-fund
       - name: Build shared web assets
         env:
