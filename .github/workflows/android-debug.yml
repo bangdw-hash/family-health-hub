@@ -30,11 +30,15 @@ jobs:
         run: npm run build
       - name: Generate native Android project
         run: npx cap add android && npx cap sync android
-      - name: Build unsigned-for-release debug APK
+      - name: Set beta Android version
+        run: |
+          sed -i 's/versionCode 1/versionCode 3/' android/app/build.gradle
+          sed -i 's/versionName "1.0"/versionName "0.2.2"/' android/app/build.gradle
+      - name: Build Android debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: family-health-hub-android-v0.2.1-debug
+          name: family-health-hub-android-v0.2.2-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
