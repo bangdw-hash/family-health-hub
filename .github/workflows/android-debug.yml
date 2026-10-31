@@ -32,8 +32,8 @@ jobs:
         run: npx cap add android && npx cap sync android
       - name: Set beta Android version
         run: |
-          sed -i 's/versionCode 1/versionCode 3/' android/app/build.gradle
-          sed -i 's/versionName "1.0"/versionName "0.2.2"/' android/app/build.gradle
+          sed -i 's/versionCode 1/versionCode 4/' android/app/build.gradle
+          sed -i 's/versionName "1.0"/versionName "0.2.3"/' android/app/build.gradle
       - name: Build Android debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
