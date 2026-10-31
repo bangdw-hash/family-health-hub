@@ -4,3 +4,9 @@
 .app button{min-height:var(--fhh-button-size,44px)}
 .app nav button{min-height:max(52px,var(--fhh-button-size,44px))}
 .app input[type=range]{accent-color:#2563eb}
+
+/* Authentication controls */
+.auth .remember-login{display:flex;align-items:center;gap:10px;margin:12px 0;font-size:0.9rem}
+.auth .remember-login input[type=checkbox]{width:20px;height:20px;min-width:20px;accent-color:#2563eb}
+.auth [role=alert]{color:#b42318;line-height:1.5}
+.auth [role=status]{color:#146c43;line-height:1.5}
