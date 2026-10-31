@@ -34,8 +34,8 @@ begin
  if length(trim(p_name))<2 then raise exception 'Family name too short';end if;
  insert into public.family_groups(name,created_by) values(trim(p_name),auth.uid()) returning id into g;
  insert into public.family_members(family_id,user_id,role,status) values(g,auth.uid(),'owner','approved');
- code:=upper(encode(gen_random_bytes(9),'hex'));
- insert into fhh_private.family_codes(family_id,code_hash) values(g,encode(digest(code,'sha256'),'hex'));
+ code:=upper(encode(public.gen_random_bytes(9),'hex'));
+ insert into fhh_private.family_codes(family_id,code_hash) values(g,encode(public.digest(code,'sha256'),'hex'));
  return jsonb_build_object('family_id',g,'invite_code',code);
 end $$;
 create or replace function public.request_family_join(p_code text,p_name text,p_phone text default null,p_relationship text default null) returns uuid language plpgsql security definer set search_path='' as $$
@@ -43,7 +43,7 @@ declare g uuid;
 begin
  if auth.uid() is null then raise exception 'Authentication required';end if;
  if length(trim(p_name))<2 then raise exception 'Applicant name required';end if;
- select family_id into g from fhh_private.family_codes where code_hash=encode(digest(upper(trim(p_code)),'sha256'),'hex');
+ select family_id into g from fhh_private.family_codes where code_hash=encode(public.digest(upper(trim(p_code)),'sha256'),'hex');
  if g is null then raise exception 'Invalid family code';end if;
  if exists(select 1 from public.family_members where family_id=g and user_id=auth.uid() and status='approved') then raise exception 'Already a member';end if;
  insert into public.family_join_requests(family_id,user_id,applicant_name,phone,relationship,status) values(g,auth.uid(),trim(p_name),p_phone,p_relationship,'pending')
@@ -63,8 +63,8 @@ create or replace function public.rotate_family_code(p_family uuid) returns text
 declare code text;
 begin
  if not fhh_private.is_member(p_family) then raise exception 'Not permitted';end if;
- code:=upper(encode(gen_random_bytes(9),'hex'));
- update fhh_private.family_codes set code_hash=encode(digest(code,'sha256'),'hex'),rotated_at=now() where family_id=p_family;
+ code:=upper(encode(public.gen_random_bytes(9),'hex'));
+ update fhh_private.family_codes set code_hash=encode(public.digest(code,'sha256'),'hex'),rotated_at=now() where family_id=p_family;
  return code;
 end $$;
 revoke all on function public.create_family(text),public.request_family_join(text,text,text,text),public.approve_family_join(uuid),public.rotate_family_code(uuid) from public,anon;
