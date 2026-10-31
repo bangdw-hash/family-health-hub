@@ -1,0 +1,40 @@
+name: Family Health Hub - Android Debug APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [ccr-d22dfd19-juxqxs, dev/family-health-hub-supabase-v1]
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'capacitor.config.ts'
+      - '.github/workflows/android-debug.yml'
+permissions:
+  contents: read
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify preinstalled Android SDK
+        run: test -d "$ANDROID_HOME" && "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+      - run: npm install --no-audit --no-fund
+      - name: Build shared web assets
+        run: npm run build
+      - name: Generate native Android project
+        run: npx cap add android && npx cap sync android
+      - name: Build unsigned-for-release debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: family-health-hub-android-v0.2.0-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
