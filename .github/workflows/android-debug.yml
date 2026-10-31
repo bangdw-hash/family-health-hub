@@ -35,6 +35,6 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: family-health-hub-android-v0.2.0-debug
+          name: family-health-hub-android-v0.2.1-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
