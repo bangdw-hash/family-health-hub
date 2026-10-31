@@ -10,3 +10,8 @@
 .auth .remember-login input[type=checkbox]{width:20px;height:20px;min-width:20px;accent-color:#2563eb}
 .auth [role=alert]{color:#b42318;line-height:1.5}
 .auth [role=status]{color:#146c43;line-height:1.5}
+
+.mail-verification{margin-top:16px;padding:16px;border:1px solid #cbd5e1;border-radius:12px}
+.mail-verification h2{font-size:1.05rem;margin:0 0 8px}
+.mail-verification p{overflow-wrap:anywhere}
+.mail-verification .mail-link{display:block;text-align:center;text-decoration:none;padding:12px;border-radius:9px;margin:12px 0;background:#2563eb;color:white}
