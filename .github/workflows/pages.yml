@@ -3,7 +3,7 @@ name: Family Health Hub - GitHub Pages
 on:
   workflow_dispatch:
   push:
-    branches: [dev/family-health-hub-supabase-v1]
+    branches: [ccr-d22dfd19-juxqxs, dev/family-health-hub-supabase-v1]
   pull_request:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
         with:
           path: dist
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/ccr-d22dfd19-juxqxs')
     needs: build
     runs-on: ubuntu-latest
     environment:
