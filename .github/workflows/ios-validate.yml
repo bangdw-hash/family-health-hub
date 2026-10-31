@@ -13,9 +13,6 @@ jobs:
           node-version: '20'
       - run: npm install --no-audit --no-fund
       - name: Build shared web assets
-        env:
-          VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
       - run: npx cap add ios && npx cap sync ios
       - name: Compile iOS Simulator target
