@@ -14,7 +14,11 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: pip install icalendar
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install icalendar
+      - run: python3 -I -c "import icalendar"
       - run: npm test
       - run: npm run build
         env:
