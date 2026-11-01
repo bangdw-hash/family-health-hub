@@ -48,3 +48,12 @@
 1. SQL Editor에서 `supabase/migrations/20261102000000_calendar_feeds.sql` 실행.
 2. 엣지 함수 `calendar-feed` 배포(Verify JWT 끔). 배포 후 `https://ynstvmzhtzokvllrnjtn.supabase.co/functions/v1/calendar-feed/<64자리 토큰>.ics` 형식으로 응답해야 함(잘못된 토큰은 404).
 3. 카카오 개발자 콘솔 → 앱 생성 → 플랫폼(Web)에 `https://bangdw-hash.github.io` 등록 → JavaScript 키를 GitHub Actions 변수 `FHH_KAKAO_JS_KEY`에 등록(콘솔 메뉴 이름은 변경될 수 있어 확인 필요).
+
+## 2026-11-01 운영 배포 갱신
+- 협업 및 calendar_feeds 테이블/RPC는 운영 DB에 존재함을 확인했습니다. 기존 데이터는 변경하지 않았습니다.
+- calendar-feed Edge Function을 저장소 소스로 재배포했습니다(version 2). 유효하지 않은 토큰 요청은 HTTP 404입니다.
+- PR #7 병합 후 Pages 배포 및 운영 브랜치 CI 성공을 확인했습니다. 단위 16건 + DB/RLS 21건, 실패·건너뛰기 0건입니다.
+- CI의 운영 브랜치 지정, Python 표준 ICS 파서 실행 환경, 빌드 전 환경변수 검사를 보완했습니다.
+- 앱 버전은 0.4.0으로 통일하며 Android versionCode는 workflow 실행 번호로 자동 증가합니다. APK 파일명도 package.json 버전을 사용합니다.
+- FHH_KAKAO_JS_KEY는 미설정입니다. 카카오 SDK 대신 기기 공유창/클립보드 대체 동작을 사용합니다. 전용 공유창은 카카오 앱·도메인·키 설정이 필요합니다.
+- 실제 계정의 캘린더 구독, 로그인 후 운영 데이터 흐름, Android/iOS 실기기 동작 및 스토어 배포는 검증·완료 범위에 포함하지 않습니다.
