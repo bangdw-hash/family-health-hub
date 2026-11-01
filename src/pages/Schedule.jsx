@@ -6,7 +6,7 @@ import {monthGrid, fmtDate, WEEKDAYS} from '../lib/format.js';
 import {ChevronLeft, ChevronRight, Plus} from 'lucide-react';
 
 export default function Schedule() {
-  const {data, today, patients, colorOf, sheet, creatable} = useApp();
+  const {data, today, patients, colorOf, sheet, creatable, features} = useApp();
   const t = new Date(today + 'T00:00:00');
   const [cur, setCur] = useState({y: t.getFullYear(), m: t.getMonth()}), [sel, setSel] = useState(today), [filter, setFilter] = useState(''), [view, setView] = useState('cal');
   const ids = patients.map(p => p.id);
@@ -17,7 +17,7 @@ export default function Schedule() {
   const upcoming = appts.filter(a => a.visit_date >= today && a.status !== '취소').sort((a, b) => a.visit_date.localeCompare(b.visit_date) || (a.visit_time || '').localeCompare(b.visit_time || ''));
   const past = appts.filter(a => a.visit_date < today || a.status === '취소').sort((a, b) => b.visit_date.localeCompare(a.visit_date)).slice(0, 50);
   return <>
-    <PageHeader title="진료 일정" right={creatable.length > 0 && <button type="button" className="primary-soft" onClick={() => sheet.open('appt', {defaultDate: sel, defaultPatient: filter})}><Plus size={18}/> 일정 추가</button>}/>
+    <PageHeader title="진료 일정" right={creatable.length > 0 && <div className="head-actions">{features.visits && <button type="button" onClick={() => sheet.open('extract', {defaultPatient: filter})}>캡처로 등록</button>}<button type="button" className="primary-soft" onClick={() => sheet.open('appt', {defaultDate: sel, defaultPatient: filter})}><Plus size={18}/> 일정 추가</button></div>}/>
     <div className="filters"><Segmented label="보기 방식" value={view} onChange={setView} options={[['cal', '달력'], ['list', '목록']]}/>
       {patients.length > 1 && <select aria-label="환자 필터" value={filter} onChange={e => setFilter(e.target.value)}><option value="">전체 환자</option>{patients.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}</div>
     {view === 'cal' ? <>

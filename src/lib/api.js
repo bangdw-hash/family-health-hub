@@ -16,6 +16,17 @@ export function makeApi({familyId, userId, reload}) {
   };
   return {
     insert, update, reloadAll: () => reload(),
+    remove: async (table, id) => { const {data, error} = await supabase.from(table).delete().eq('id', id).select('id'); if (error) throw error; if (!data?.length) throw new Error('row-level security: no rows deleted'); reload(table); },
+    async setStepDone(id, done) { const {error} = await supabase.rpc('set_step_done', {p_step: id, p_done: done}); if (error) throw error; reload('appointment_steps'); },
+    /** 한 일정의 단계 목록을 저장: 기존 id는 수정, 새 항목은 추가, 빠진 항목은 삭제 */
+    async saveSteps(appointmentId, patientId, steps, existing = []) {
+      const keep = new Set(steps.filter(s => s.id).map(s => s.id));
+      for (const old of existing) if (!keep.has(old.id)) must(await supabase.from('appointment_steps').delete().eq('id', old.id));
+      const rows = steps.filter(s => s.title?.trim()).map((s, i) => ({id: s.id || newId(), family_id: familyId, patient_id: patientId, appointment_id: appointmentId, phase: s.phase, kind: s.kind || '기타', title: s.title.trim(), step_time: s.step_time || null,
+        relative_minutes: s.relative_minutes ?? null, place: s.place || null, staff: s.staff || null, note: s.note || null, sort: i, ...(s.id && s.done_at !== undefined ? {done_at: s.done_at, done_by: s.done_by} : {})}));
+      if (rows.length) must(await supabase.from('appointment_steps').upsert(rows, {onConflict: 'id'}));
+      reload('appointment_steps');
+    },
     trash: (table, id) => update(table, id, {deleted_at: new Date().toISOString()}),
     restore: (table, id) => update(table, id, {deleted_at: null}),
     async markTaken(med, date, slot) {
@@ -51,4 +62,15 @@ export function makeApi({familyId, userId, reload}) {
 }
 export function shouldAutoPurge(familyId) {
   try { const k = 'fhh:purged:' + familyId; if (localStorage.getItem(k) === todayStr()) return false; localStorage.setItem(k, todayStr()); return true; } catch { return false; }
+}
+
+/** 엣지 함수 ai-ocr 호출. 오류 본문의 한글 메시지를 그대로 예외로 전달합니다. */
+export async function callAi(body) {
+  const {data, error} = await supabase.functions.invoke('ai-ocr', {body});
+  if (error) {
+    let msg = '';
+    try { msg = (await error.context.json())?.message || ''; } catch { /* 본문 없음 */ }
+    const e = new Error(msg || 'AI 서비스에 연결하지 못했습니다. 관리자가 엣지 함수(ai-ocr)를 배포했는지 확인하십시오.'); e.ai = true; throw e;
+  }
+  return data;
 }

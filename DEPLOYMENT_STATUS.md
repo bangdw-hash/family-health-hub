@@ -57,3 +57,9 @@
 - 앱 버전은 0.4.0으로 통일하며 Android versionCode는 workflow 실행 번호로 자동 증가합니다. APK 파일명도 package.json 버전을 사용합니다.
 - FHH_KAKAO_JS_KEY는 미설정입니다. 카카오 SDK 대신 기기 공유창/클립보드 대체 동작을 사용합니다. 전용 공유창은 카카오 앱·도메인·키 설정이 필요합니다.
 - 실제 계정의 캘린더 구독, 로그인 후 운영 데이터 흐름, Android/iOS 실기기 동작 및 스토어 배포는 검증·완료 범위에 포함하지 않습니다.
+
+## 2026-11-03 v0.5.0 (진료 전·중·후 + AI OCR) — 적용 필요
+1. SQL Editor에서 `supabase/migrations/20261103000000_visit_details.sql` 실행. (Vault 확장 필요: Database > Extensions > `supabase_vault` 활성화)
+2. 엣지 함수 재배포: `calendar-feed`(장소·준비사항 반영) 및 신규 `ai-ocr` — 둘 다 `--no-verify-jwt`.
+3. 앱 로그인 후 더보기 > AI 설정(OCR)에서 서비스사·API 키·모델 저장 → 모델 목록 불러오기 → 연결 테스트.
+4. 개인정보 동의 버전이 `2026-11-03`으로 올라 모든 사용자가 다시 동의해야 합니다(AI 전송 안내 추가).

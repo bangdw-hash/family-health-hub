@@ -34,11 +34,20 @@ const VTIMEZONE = ['BEGIN:VTIMEZONE', 'TZID:' + TZ, 'BEGIN:STANDARD', 'DTSTART:1
 
 export function apptTimes(a) {
   if (!a.visit_time) return {allDay: true, start: ymd(a.visit_date), end: ymd(addDaysStr(a.visit_date, 1))};
-  return {allDay: false, start: localDateTime(a.visit_date, a.visit_time), end: localDateTime(a.visit_date, a.visit_time, 60)};
+  const end = a.end_time && String(a.end_time).slice(0, 5) > String(a.visit_time).slice(0, 5) ? localDateTime(a.visit_date, a.end_time) : localDateTime(a.visit_date, a.visit_time, 60);
+  return {allDay: false, start: localDateTime(a.visit_date, a.visit_time), end};
 }
-export function apptTitle(a, patientName) { return `[진료] ${patientName ? patientName + ' · ' : ''}${a.hospital}${a.department ? ' ' + a.department : ''}`; }
-export function apptDetails(a, patientName, companionName) {
-  return [patientName && `환자: ${patientName}`, a.department && `진료과: ${a.department}`, a.doctor && `담당 의사: ${a.doctor}`, `동행: ${companionName || '미정'}`, a.status && `상태: ${a.status}`, 'Family Health Hub에서 만든 일정입니다.'].filter(Boolean).join('\n');
+const KIND_TAG = {'검사': '검사', '시술·수술': '시술', '입원': '입원'};
+export function apptTitle(a, patientName) {
+  const tag = KIND_TAG[a.kind] || '진료';
+  return `[${tag}] ${patientName ? patientName + ' · ' : ''}${a.hospital}${a.department ? ' ' + a.department : ''}${a.test_name ? ' ' + a.test_name : ''}`;
+}
+export function apptLocation(a) { return [a.hospital, a.place].filter(Boolean).join(' '); }
+/** 의료진 이름·예약번호·병원 전화·수납 금액·안내문 원문은 외부로 내보내지 않습니다. */
+export function apptDetails(a, patientName, companionName, prep = []) {
+  const pre = [a.fasting_hours ? `${a.fasting_hours}시간 금식` : null, ...prep].filter(Boolean);
+  return [patientName && `환자: ${patientName}`, a.kind && `구분: ${a.kind}`, a.department && `진료과: ${a.department}`, a.place && `장소: ${a.place}`, a.hours_note && `이용 안내: ${a.hours_note}`,
+    pre.length && `준비: ${pre.join(', ')}`, `동행: ${companionName || '미정'}`, a.status && `상태: ${a.status}`, 'Family Health Hub에서 만든 일정입니다.'].filter(Boolean).join('\n');
 }
 
 /**
@@ -55,10 +64,22 @@ export function buildIcs({calName = 'Family Health Hub', patients = [], appointm
     L.push('BEGIN:VEVENT', `UID:appt-${a.id}@family-health-hub`, 'DTSTAMP:' + stamp);
     if (a.updated_at || a.created_at) L.push('LAST-MODIFIED:' + utcStamp(new Date(a.updated_at || a.created_at)), 'SEQUENCE:' + seq(a.updated_at || a.created_at));
     L.push(t.allDay ? `DTSTART;VALUE=DATE:${t.start}` : `DTSTART;TZID=${TZ}:${t.start}`, t.allDay ? `DTEND;VALUE=DATE:${t.end}` : `DTEND;TZID=${TZ}:${t.end}`,
-      'SUMMARY:' + esc(apptTitle(a, name(a.patient_id))), 'LOCATION:' + esc(a.hospital),
-      'DESCRIPTION:' + esc(apptDetails(a, name(a.patient_id), a.companion_name)), 'STATUS:' + (cancelled ? 'CANCELLED' : 'CONFIRMED'), 'TRANSP:OPAQUE');
+      'SUMMARY:' + esc(apptTitle(a, name(a.patient_id))), 'LOCATION:' + esc(apptLocation(a)),
+      'DESCRIPTION:' + esc(apptDetails(a, name(a.patient_id), a.companion_name, (a.steps_before || []).filter(x => !x.done).map(x => x.title))), 'STATUS:' + (cancelled ? 'CANCELLED' : 'CONFIRMED'), 'TRANSP:OPAQUE');
     if (!cancelled) L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + esc('진료 일정 알림'), 'TRIGGER:-PT120M', 'END:VALARM');
     L.push('END:VEVENT');
+    // 진료 전 준비(금식 시작 등): 시간이 있는 예약에 한해 별도 일정으로 표시
+    if (!cancelled && !t.allDay && a.status !== '진료완료') {
+      const steps = (a.steps_before || []).filter(x => x.relative_minutes != null && !x.done);
+      if (a.fasting_hours && !steps.some(x => x.kind === '금식')) steps.push({id: 'fast-' + a.id, kind: '금식', title: `금식 시작 (${a.fasting_hours}시간)`, relative_minutes: -a.fasting_hours * 60});
+      for (const st of steps) {
+        L.push('BEGIN:VEVENT', `UID:prep-${st.id}@family-health-hub`, 'DTSTAMP:' + stamp,
+          `DTSTART;TZID=${TZ}:${localDateTime(a.visit_date, a.visit_time, st.relative_minutes)}`, 'DURATION:PT10M',
+          'SUMMARY:' + esc(`[준비] ${name(a.patient_id) ? name(a.patient_id) + ' · ' : ''}${st.title}`),
+          'DESCRIPTION:' + esc(`${apptTitle(a, name(a.patient_id))} 준비 항목입니다.`), 'TRANSP:TRANSPARENT',
+          'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + esc('진료 준비'), 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT');
+      }
+    }
   }
   if (options.include_meds !== false) {
     for (const m of medications) {
@@ -79,8 +100,8 @@ export function buildIcs({calName = 'Family Health Hub', patients = [], appointm
 }
 
 /** 구글 캘린더 '일정 추가' 화면 링크(로그인·API 키 불필요) */
-export function googleCalendarUrl(a, patientName, companionName) {
-  const t = apptTimes(a), q = new URLSearchParams({action: 'TEMPLATE', text: apptTitle(a, patientName), details: apptDetails(a, patientName, companionName), location: a.hospital || ''});
+export function googleCalendarUrl(a, patientName, companionName, prep = []) {
+  const t = apptTimes(a), q = new URLSearchParams({action: 'TEMPLATE', text: apptTitle(a, patientName), details: apptDetails(a, patientName, companionName, prep), location: apptLocation(a)});
   q.set('dates', t.start + '/' + t.end); if (!t.allDay) q.set('ctz', TZ);
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }

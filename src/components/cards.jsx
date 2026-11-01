@@ -6,25 +6,31 @@ import {fmtTime, fmtDate, fmtDateTime, ACTION_LABEL, ENTITY_LABEL, timeAgo} from
 import {memberName} from '../lib/access.js';
 import {daySlots, groupBySlot} from '../lib/meds.js';
 import {apptShareText, medShareText} from '../lib/share.js';
+import {stepsOf, progress, stepDue, fmtDue, FINISHED} from '../lib/visit.js';
 
 export const live = arr => arr.filter(x => !x.deleted_at);
-const statusTone = s => s === '진료완료' ? 'ok' : s === '취소' ? 'muted' : 'info';
+const statusTone = s => s === '진료완료' ? 'ok' : s === '취소' ? 'muted' : s === '변경됨' ? 'warn' : 'info';
 
 export function ApptCard({a, showDate}) {
-  const {patientById, colorOf, members, user, can, sheet, api, act, today} = useApp();
+  const {patientById, colorOf, members, user, can, sheet, api, act, today, data, features} = useApp();
   const p = patientById(a.patient_id), comp = members.find(m => m.user_id === a.companion_id), mine = a.companion_id === user.id;
   const editable = can(a.patient_id, 'edit'), canRecord = can(a.patient_id, 'create');
+  const before = features?.visits ? stepsOf(data.appointment_steps, a.id, 'before') : [], pr = progress(before), pend = before.filter(s => !s.done_at);
+  const fast = a.fasting_hours && a.visit_time && !FINISHED.includes(a.status) ? fmtDue(stepDue(a, {relative_minutes: -a.fasting_hours * 60})) : null;
+  const open = () => features?.visits ? sheet.open('visit', {appt: a}) : sheet.open('appt', {initial: a});
   return <article className="card appt" style={{'--accent': colorOf(a.patient_id)}}>
-    <button type="button" className="card-main" onClick={() => sheet.open('appt', {initial: a})} aria-label={`${a.hospital} 진료 일정 ${editable ? '수정' : '조회'}`}>
-      <span className="card-time">{showDate ? fmtDate(a.visit_date) + ' ' : ''}{fmtTime(a.visit_time) || '시간 미정'}</span>
-      <span className="card-title">{a.hospital}{a.department ? ' · ' + a.department : ''}</span>
-      <span className="card-meta"><PatientChip patient={p} color={colorOf(a.patient_id)}/> <Badge tone={statusTone(a.status)}>{a.status}</Badge></span>
+    <button type="button" className="card-main" onClick={open} aria-label={`${a.hospital} ${a.kind || '진료'} 일정 상세`}>
+      <span className="card-time">{showDate ? fmtDate(a.visit_date) + ' ' : ''}{fmtTime(a.visit_time) || '시간 미정'}{a.kind && a.kind !== '외래진료' ? ' · ' + a.kind : ''}</span>
+      <span className="card-title">{a.hospital}{a.department ? ' · ' + a.department : ''}{a.test_name ? ' · ' + a.test_name : ''}</span>
+      {a.place && <span className="card-snippet">{a.place}</span>}
+      <span className="card-meta"><PatientChip patient={p} color={colorOf(a.patient_id)}/> <Badge tone={statusTone(a.status)}>{a.status}</Badge>
+        {fast && <Badge tone="warn">금식 시작 {fast}</Badge>}{pr.total > 0 && !FINISHED.includes(a.status) && <Badge tone={pend.length ? 'warn' : 'ok'}>준비 {pr.done}/{pr.total}</Badge>}</span>
     </button>
     <div className="card-actions">
-      <button type="button" aria-label={`${a.hospital} 일정 공유·캘린더 추가`} onClick={() => sheet.open('share', {title: '진료 일정 공유', text: apptShareText(a, p?.name || '', comp?.display_name), appt: a, patientName: p?.name || '', companionName: comp?.display_name})}><Share2 size={16}/> 공유</button>
+      <button type="button" aria-label={`${a.hospital} 일정 공유·캘린더 추가`} onClick={() => sheet.open('share', {title: '일정 공유', text: apptShareText(a, p?.name || '', comp?.display_name, pend.map(s => s.title)), appt: a, patientName: p?.name || '', companionName: comp?.display_name, prep: pend.map(s => s.title)})}><Share2 size={16}/> 공유</button>
       <span className="muted"><UserCheck size={14} aria-hidden="true"/> {comp ? '동행 ' + comp.display_name : '동행 미정'}</span>
-      {editable && a.status !== '취소' && a.status !== '진료완료' && <button type="button" onClick={() => act(() => api.update('appointments', a.id, {companion_id: mine ? null : user.id}))}>{mine ? '동행 해제' : comp ? '제가 대신 동행' : '제가 동행합니다'}</button>}
-      {canRecord && a.status === '예약완료' && a.visit_date <= today && <button type="button" className="primary-soft" onClick={() => sheet.open('record', {defaultPatient: a.patient_id, defaultDate: a.visit_date, linkAppointment: a.id, completeAppt: a.id})}><Check size={16}/> 진료 완료·기록</button>}
+      {editable && !FINISHED.includes(a.status) && <button type="button" onClick={() => act(() => api.update('appointments', a.id, {companion_id: mine ? null : user.id}))}>{mine ? '동행 해제' : comp ? '제가 대신 동행' : '제가 동행합니다'}</button>}
+      {canRecord && a.status !== '진료완료' && a.status !== '취소' && a.visit_date <= today && <button type="button" className="primary-soft" onClick={() => sheet.open('record', {defaultPatient: a.patient_id, defaultDate: a.visit_date, linkAppointment: a.id, completeAppt: a.id})}><Check size={16}/> 진료 완료·기록</button>}
     </div>
   </article>;
 }

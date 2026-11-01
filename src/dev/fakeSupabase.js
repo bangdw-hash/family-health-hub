@@ -29,11 +29,12 @@ export function createFakeSupabase() {
       {id: 'm0000000-0000-0000-0000-000000000001', family_id: FAM, patient_id: P1, name: '아모디핀', dosage: '5mg 1정', instructions: '식후', times: ['08:00', '20:00'], active: true, created_at: now(), deleted_at: null},
       {id: 'm0000000-0000-0000-0000-000000000002', family_id: FAM, patient_id: P2, name: '메트포르민', dosage: '500mg', instructions: '식사 중', times: [], active: true, created_at: now(), deleted_at: null}],
     med_intakes: empty ? [] : [{id: uid(), family_id: FAM, patient_id: P1, medication_id: 'm0000000-0000-0000-0000-000000000001', scheduled_date: d(0), slot: '08:00', status: 'taken', taken_by: SIS, taken_at: now()}],
-    calendar_feeds: [],
+    calendar_feeds: [], appointment_steps: [], hospitals: [{id: uid(), family_id: FAM, name: '서울대병원', phone: '02-2072-2114', address: '서울 종로구'}],
+    ai_cfg: {configured: params.get('ai') === '1', enabled: true, provider: 'anthropic', model: 'claude-sonnet-5-5', daily_limit: 100, used_24h: 3, has_key: params.get('ai') === '1'},
     attachments: [], audit_logs: empty ? [] : [
       {id: uid(), family_id: FAM, actor_id: SIS, action: 'update', entity: 'appointments', label: '서울대병원', patient_id: P1, created_at: now()},
       {id: uid(), family_id: FAM, actor_id: ME, action: 'create', entity: 'medications', label: '아모디핀', patient_id: P1, created_at: new Date(Date.now() - 3600e3).toISOString()}],
-    user_consents: params.get('consent') === '1' ? [] : [{user_id: me, version: '2026-11-01'}],
+    user_consents: params.get('consent') === '1' ? [] : [{user_id: me, version: '2026-11-03'}],
   };
   const files = {};
   const listeners = new Set();
@@ -49,13 +50,15 @@ export function createFakeSupabase() {
     limit(n) { this.lim = n; return this; }
     maybeSingle() { this.single = true; return this; }
     insert(v) { this.mode = 'insert'; this.val = v; return this; }
-    upsert(v) { this.mode = 'insert'; this.val = v; return this; }
+    upsert(v) { this.mode = 'upsert'; this.val = v; return this; }
     update(v) { this.mode = 'update'; this.val = v; return this; }
     delete() { this.mode = 'delete'; return this; }
     then(res, rej) { return this.run().then(res, rej); }
     async run() {
       await new Promise(r => setTimeout(r, 15));
+      if (params.get('old') === '1' && (this.t === 'appointment_steps' || this.t === 'hospitals')) return {data: null, error: {code: '42P01', message: 'relation "public.' + this.t + '" does not exist'}};
       const tbl = db[this.t] || (db[this.t] = []);
+      if (this.mode === 'upsert') { const rows = [].concat(this.val); rows.forEach(r => { const i = tbl.findIndex(x => x.id === r.id); if (i >= 0) Object.assign(tbl[i], r); else tbl.push({created_at: now(), ...r}); }); notify(this.t); return {data: rows, error: null}; }
       if (this.mode === 'insert') { const rows = [].concat(this.val).map(r => ({created_at: now(), ...r})); tbl.push(...rows); notify(this.t); return {data: rows, error: null}; }
       let rows = tbl.filter(r => this.f.every(fn => fn(r)));
       if (this.mode === 'update') { rows.forEach(r => Object.assign(r, this.val)); notify(this.t); return {data: rows, error: null}; }
@@ -77,6 +80,10 @@ export function createFakeSupabase() {
     create_calendar_feed: a => { const t = (uid() + uid()).replace(/-/g, ''); db.calendar_feeds = [{id: uid(), user_id: me, family_id: a.p_family, token: t, include_meds: a.p_include_meds, show_med_names: a.p_show_med_names, patient_ids: a.p_patient_ids, last_fetched_at: null}]; return t; },
     update_calendar_feed: a => { const f = db.calendar_feeds[0]; if (f) Object.assign(f, {include_meds: a.p_include_meds, show_med_names: a.p_show_med_names, patient_ids: a.p_patient_ids}); },
     delete_calendar_feed: () => { db.calendar_feeds = []; },
+    ai_status: () => ({...db.ai_cfg}),
+    set_ai_settings: a => { db.ai_cfg = {configured: true, enabled: a.p_enabled, provider: a.p_provider, model: a.p_model, daily_limit: a.p_daily_limit, used_24h: 3, has_key: true}; db.ai_saved = {...a, p_api_key: a.p_api_key ? '[저장됨]' : null}; },
+    delete_ai_key: () => { db.ai_cfg = {...db.ai_cfg, configured: false, has_key: false, enabled: false}; },
+    set_step_done: a => { const st = db.appointment_steps.find(x => x.id === a.p_step); if (st) { st.done_at = a.p_done ? now() : null; st.done_by = a.p_done ? me : null; } },
     update_member: () => null, remove_member: () => null, update_my_profile: () => null, log_audit_event: () => null, empty_trash: () => 0, delete_my_account: () => null,
   };
   return {
@@ -88,9 +95,18 @@ export function createFakeSupabase() {
       resetPasswordForEmail: async () => ({error: null}), updateUser: async () => ({error: null}),
     },
     from: t => new Q(t),
-    rpc: async (name, args) => { await new Promise(r => setTimeout(r, 10)); const f = rpc[name]; return f ? {data: f(args || {}), error: null} : {data: null, error: {message: 'unknown rpc ' + name}}; },
+    rpc: async (name, args) => { await new Promise(r => setTimeout(r, 10)); if (params.get('old') === '1' && name === 'ai_status') return {data: null, error: {code: 'PGRST202', message: 'Could not find the function public.ai_status'}}; const f = rpc[name]; return f ? {data: f(args || {}), error: null} : {data: null, error: {message: 'unknown rpc ' + name}}; },
     channel: () => { const ch = {on: () => ch, subscribe: () => { listeners.add(ch._cb = () => {}); return ch; }}; return ch; },
     removeChannel: () => {},
+    functions: {invoke: async (name, {body}) => {
+      await new Promise(r => setTimeout(r, 30));
+      if (params.get('aiErr') === '1') return {data: null, error: {context: {json: async () => ({message: 'API 키가 올바르지 않거나 이 모델을 사용할 권한이 없습니다.'})}}};
+      if (body.action === 'models') return {data: {models: [{id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5'}, {id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5'}]}, error: null};
+      if (body.action === 'test') return {data: {ok: true}, error: null};
+      return {data: {provider: 'anthropic', model: 'claude-sonnet-5-5', warnings: ['추정 포함'], appointments: [
+        {kind: '검사', hospital: '심뇌혈관병원', department: '순환기내과', visit_date: '2026-12-10', visit_time: null, test_name: '진단검사', place: '외래채혈실', fasting_hours: 8, related_lead_minutes: 120, hours_note: '평일 06:30~18:00', steps: []},
+        {kind: '외래진료', hospital: '심뇌혈관병원', department: '순환기내과', doctor: '장기욱', visit_date: '2026-12-10', visit_time: '11:51', specialty: '협심증, 심근경색', place: '본관 2층 심뇌혈관병원', booking_source: '본인 예약', steps: [{phase: 'during', kind: '접수', title: '접수'}, {phase: 'during', kind: '진료', title: '진료'}]}]}, error: null};
+    }},
     storage: {from: () => ({
       upload: async (p, f) => { files[p] = f; return {error: null}; }, remove: async () => ({error: null}),
       createSignedUrl: async p => ({data: {signedUrl: 'data:text/plain,' + encodeURIComponent(p)}, error: null}),

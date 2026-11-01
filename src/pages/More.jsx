@@ -5,11 +5,13 @@ import Members from './Members.jsx';
 import {Activity, Trash, Export} from './Admin.jsx';
 import {Display, Security, Notify, Privacy} from './Settings.jsx';
 import CalendarSync from './CalendarSync.jsx';
-import {Users, History, Trash2, Download, Type, Lock, BellRing, ShieldCheck, Repeat, ChevronRight, CalendarSync as CalIcon} from 'lucide-react';
+import Hospitals from './Hospitals.jsx';
+import AiSettings from './AiSettings.jsx';
+import {Users, History, Trash2, Download, Type, Lock, BellRing, ShieldCheck, Repeat, ChevronRight, CalendarSync as CalIcon, Hospital, ScanText} from 'lucide-react';
 
-const SUBS = {members: Members, activity: Activity, trash: Trash, export: Export, display: Display, security: Security, notify: Notify, privacy: Privacy, calendar: CalendarSync};
+const SUBS = {members: Members, activity: Activity, trash: Trash, export: Export, display: Display, security: Security, notify: Notify, privacy: Privacy, calendar: CalendarSync, hospitals: Hospitals, ai: AiSettings};
 export default function More() {
-  const {nav, family, groups, setFamily, me, isOwner, data, lockable, data: {family_join_requests}} = useApp();
+  const {nav, family, groups, setFamily, me, isOwner, data, ai, features, data: {family_join_requests}} = useApp();
   const Sub = SUBS[nav.state.sub];
   if (Sub) return <Sub/>;
   const pending = isOwner ? family_join_requests.filter(r => r.status === 'pending').length : 0;
@@ -23,6 +25,8 @@ export default function More() {
       {item('members', Users, '가족 구성원·초대', isOwner ? '초대 링크, 가입 승인, 권한 관리' : '구성원 확인, 내 정보 수정', pending ? pending + '건 대기' : '')}
       {item('activity', History, '활동 기록', '누가 무엇을 변경했는지 확인')}
       {item('trash', Trash2, '휴지통', '삭제한 항목 복원', trashCount ? trashCount + '건' : '')}
+      {features.visits && item('hospitals', Hospital, '자주 가는 병원', '병원 정보 저장·재사용')}
+      {features.visits && isOwner && item('ai', ScanText, 'AI 설정(OCR)', ai?.configured ? `${ai.enabled ? '사용 중' : '꺼짐'} · ${ai.model}` : '서비스사·API 키·모델 등록(관리자)', ai?.configured ? '' : '미설정')}
       {item('calendar', CalIcon, '캘린더·카카오톡 연동', '구글/아이폰 캘린더 구독, 카카오톡 공유')}
       {item('export', Download, '내보내기·백업', 'Excel(CSV)·JSON·첨부 포함 ZIP')}
     </section>

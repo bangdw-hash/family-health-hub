@@ -11,7 +11,7 @@ export function savePrefs(p) { try { localStorage.setItem(KEY, JSON.stringify(p)
 export function hashId(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (Math.abs(h) % 2147483000) + 1; }
 
 /** prefs.patients[id] = {meds:boolean, appts:boolean}. 반환: 시각순, 최대 max개(iOS 대기 알림 한도 64 고려). */
-export function buildSchedule({appointments, medications, patients, prefs, now = new Date(), days = 7, max = 60}) {
+export function buildSchedule({appointments, medications, patients, prefs, steps = [], now = new Date(), days = 7, max = 60}) {
   if (!prefs.enabled) return [];
   const out = [], name = id => patients.find(p => p.id === id)?.name || '';
   const detail = prefs.showDetail;
@@ -20,11 +20,15 @@ export function buildSchedule({appointments, medications, patients, prefs, now =
   for (const a of appointments) {
     if (a.deleted_at || a.status === '취소' || a.status === '진료완료') continue;
     if (!prefs.patients[a.patient_id]?.appts) continue;
-    if (a.visit_date < today || a.visit_date > addDays(endDate, 1)) continue;
+    if (a.visit_date < today || a.visit_date > addDays(endDate, 2)) continue;
     const at = apptDateTime(a);
     const t = detail ? `${name(a.patient_id)} 진료 ${fmtTime(a.visit_time) || ''}` : '진료 일정이 있습니다';
     const b = detail ? `${a.hospital}${a.department ? ' ' + a.department : ''}` : '앱에서 확인하십시오.';
     push('a-lead-' + a.id, new Date(at.getTime() - prefs.leadMinutes * 60000), t, b);
+    for (const st of steps) {
+      if (st.appointment_id !== a.id || st.phase !== 'before' || st.done_at || st.relative_minutes == null || !a.visit_time) continue;
+      push('s-' + st.id, new Date(at.getTime() + st.relative_minutes * 60000), detail ? `${name(a.patient_id)} 준비: ${st.title}` : '진료 준비 항목이 있습니다', detail ? `${a.hospital} 진료 준비` : '앱에서 확인하십시오.');
+    }
     if (prefs.dayBefore) { const d = parseDate(a.visit_date); d.setDate(d.getDate() - 1); d.setHours(18, 0, 0, 0); push('a-day-' + a.id, d, detail ? `내일 ${name(a.patient_id)} 진료` : '내일 진료 일정이 있습니다', b); }
   }
   for (const m of medications) {
