@@ -122,3 +122,16 @@ nav button.active{color:var(--primary);font-weight:800;background:var(--primary-
 .menuitem b{word-break:keep-all}.badge{white-space:nowrap}
 
 .between{justify-content:space-between;flex-wrap:wrap}.inline.between p{margin:0}hr{border:0;border-top:1px solid var(--line);margin:14px 0}details{margin:10px 0}summary{cursor:pointer;font-weight:700}
+
+/* v0.5 진료 전·중·후 */
+.vgroup{border:1px solid var(--line);border-radius:12px;margin:10px 0;background:var(--surface)}.vgroup>summary{padding:12px 14px;font-weight:700;cursor:pointer;list-style:none}.vgroup>summary::-webkit-details-marker{display:none}.vgroup>summary::before{content:'▸ ';color:var(--muted)}.vgroup[open]>summary::before{content:'▾ '}.vgroup-body{padding:0 14px 12px}
+.stack.tight{margin:0 0 8px}
+.steps-edit{display:grid;gap:8px}.step-row{display:grid;grid-template-columns:minmax(80px,110px) 1fr;gap:6px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px}.step-row select,.step-row input{margin:0}.step-row .mini{display:flex;align-items:center;gap:4px;font-size:.85rem}.step-row .mini input{width:70px}.step-ctl{grid-column:1/-1;display:flex;justify-content:flex-end;gap:2px}
+.steplist{list-style:none;padding:0;margin:8px 0}.steplist li{border:1px solid var(--line);border-radius:10px;margin:6px 0;padding:2px 10px}.steplist li.done{background:var(--ok-soft);border-color:transparent}.steplist li.next{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}.steplist small{display:block}
+.callout{background:var(--primary-soft);color:var(--text);border-radius:10px;padding:10px 12px;margin:8px 0}.callout.warn{background:var(--warn-soft);color:var(--warn)}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.row3 button,.row3 summary{width:100%}
+.btnlike{display:inline-flex;gap:6px;align-items:center;justify-content:center;background:var(--surface2);border-radius:12px;padding:8px 10px;min-height:var(--fhh-button-size,44px);cursor:pointer;list-style:none}.btnlike::-webkit-details-marker{display:none}
+.mapmenu{position:relative}.maplinks{position:absolute;right:0;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px;min-width:150px;box-shadow:var(--shadow)}.maplinks a{display:block;padding:10px;color:var(--text)}
+.vhead{border-left:5px solid var(--accent,var(--primary));padding-left:12px;margin-bottom:8px}.vhead h3{margin:4px 0}.vhead p{margin:3px 0}
+.inline-link{padding:0;min-height:0;display:inline}.extract-result{margin-top:14px}.notes{padding-left:18px}.notes li{margin:6px 0}
+@media(max-width:330px){.row3{grid-template-columns:1fr}}.row3 button,.row3 .btnlike{padding:8px 6px;font-size:.9rem}

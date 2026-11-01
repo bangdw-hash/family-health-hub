@@ -28,6 +28,10 @@ async function rows(uid, sql, params) { return (await as(uid, sql, params)).rows
 async function fails(uid, sql, params, pattern = /./) {
   await assert.rejects(() => as(uid, sql, params), pattern);
 }
+async function asRole(role, sql, params = []) {
+  await db.exec('set role ' + role);
+  try { return (await db.query(sql, params)).rows; } finally { await db.exec('reset role'); }
+}
 async function sudo(sql, params) { return (await db.query(sql, params)).rows; }
 
 before(async () => {
@@ -39,6 +43,13 @@ before(async () => {
     grant usage on schema auth to authenticated, anon;
     grant usage on schema public to authenticated, anon;
     alter default privileges in schema public grant all on tables to authenticated;
+    create role service_role nologin; grant usage on schema public to service_role; grant usage on schema auth to service_role;
+    -- Supabase Vault 모사(평문 저장). 운영에서는 실제 vault 확장이 암호화합니다.
+    create schema vault;
+    create table vault.secrets(id uuid primary key default gen_random_uuid(), name text unique, description text, secret text);
+    create function vault.create_secret(new_secret text, new_name text default null, new_description text default '', new_key_id uuid default null) returns uuid language plpgsql as $$ declare i uuid; begin insert into vault.secrets(name,description,secret) values(new_name,new_description,new_secret) returning id into i; return i; end $$;
+    create function vault.update_secret(secret_id uuid, new_secret text default null, new_name text default null, new_description text default null, new_key_id uuid default null) returns void language sql as $$ update vault.secrets set secret = coalesce(new_secret, secret) where id = secret_id $$;
+    create view vault.decrypted_secrets as select id, name, description, secret, secret as decrypted_secret from vault.secrets;
     -- PGlite에는 pgcrypto가 없어 초기 마이그레이션이 호출하는 함수만 대체합니다(운영 DB에는 실제 pgcrypto가 있음).
     create function public.gen_random_bytes(n int) returns bytea language sql as $$ select decode(substr(replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-',''), 1, n * 2), 'hex') $$;
     create function public.digest(t text, a text) returns bytea language sql as $$ select sha256(convert_to(t, 'UTF8')) $$;
@@ -50,6 +61,8 @@ before(async () => {
   await db.exec(readFileSync(join(dir, '20261101000000_collaboration.sql'), 'utf8'));
   await db.exec(readFileSync(join(dir, '20261102000000_calendar_feeds.sql'), 'utf8'));
   await db.exec(readFileSync(join(dir, '20261102000000_calendar_feeds.sql'), 'utf8'));
+  await db.exec(readFileSync(join(dir, '20261103000000_visit_details.sql'), 'utf8'));
+  await db.exec(readFileSync(join(dir, '20261103000000_visit_details.sql'), 'utf8'));
 });
 
 test('패밀리 생성과 코드 조회는 관리자에게만 허용된다', async () => {
@@ -332,6 +345,121 @@ test('캘린더 구독 피드: 토큰 접근, 권한 범위, 회수', async () =
   await rows(U.owner, 'select public.delete_calendar_feed($1)', [f2]);
   assert.equal((await anon('select public.calendar_feed_data($1) as d', [tok2]))[0].d, null);
   assert.ok((await sudo('select count(*)::int c from public.calendar_feeds'))[0].c <= 1);
+});
+
+async function visitFamily() {
+  const f = (await rows(U.owner, "select public.create_family('방문가족','관리자') as r"))[0].r.family_id;
+  const code = (await sudo('select code_plain c from fhh_private.family_codes where family_id=$1', [f]))[0].c;
+  for (const [u, lvl] of [[U.edit, 'edit'], [U.view, 'view'], [U.none, 'none']]) {
+    await rows(u, 'select public.request_family_join($1,$2)', [code, '구성원' + lvl]);
+    const rid = (await rows(U.owner, "select id from public.family_join_requests where family_id=$1 and user_id=$2 and status='pending'", [f, u]))[0].id;
+    await rows(U.owner, 'select public.approve_family_join($1,$2)', [rid, lvl]);
+  }
+  const pt = (await rows(U.owner, "insert into public.patients(family_id,name) values ($1,'방문환자') returning id", [f]))[0].id;
+  const pt2 = (await rows(U.owner, "insert into public.patients(family_id,name) values ($1,'다른환자') returning id", [f]))[0].id;
+  return {f, pt, pt2};
+}
+
+test('진료 공통 필드·연결·단계: 권한, 제약, 체크 권한', async () => {
+  const {f, pt, pt2} = await visitFamily();
+  const insA = "insert into public.appointments(family_id,patient_id,hospital,visit_date,visit_time,kind,specialty,doctor,doctor_title,place,test_name,fasting_hours,booking_source,booking_ref,hospital_phone,fee_amount,notice_text,hours_note) values ($1,$2,'심뇌혈관병원','2026-12-10','10:20','검사','신경과','서우근','교수','별관 지하 2층','진단검사',8,'본인 예약','R-1','02-000-0000',12000,'원문','평일 06:30~18:00') returning id";
+  const test = (await rows(U.edit, insA, [f, pt]))[0].id;
+  await fails(U.view, insA, [f, pt], /row-level security/);
+  const visit = (await rows(U.edit, "insert into public.appointments(family_id,patient_id,hospital,visit_date,kind) values ($1,$2,'심뇌혈관병원','2026-12-10','외래진료') returning id", [f, pt]))[0].id;
+  // 제약
+  await fails(U.edit, "insert into public.appointments(family_id,patient_id,hospital,visit_date,kind) values ($1,$2,'x','2026-12-10','엉터리')", [f, pt], /check/);
+  await fails(U.edit, "insert into public.appointments(family_id,patient_id,hospital,visit_date,fasting_hours) values ($1,$2,'x','2026-12-10',100)", [f, pt], /check/);
+  await fails(U.edit, "insert into public.appointments(family_id,patient_id,hospital,visit_date,fee_amount) values ($1,$2,'x','2026-12-10',-1)", [f, pt], /check/);
+  // 연결: 같은 환자만, 자기 자신 불가
+  assert.equal((await as(U.edit, "update public.appointments set related_appointment_id=$2, relation='test_before', related_lead_minutes=120 where id=$1", [test, visit])).affectedRows, 1);
+  const other = (await rows(U.edit, "insert into public.appointments(family_id,patient_id,hospital,visit_date) values ($1,$2,'다른병원','2026-12-10') returning id", [f, pt2]))[0].id;
+  await fails(U.edit, 'update public.appointments set related_appointment_id=$2 where id=$1', [test, other], /same patient/);
+  await fails(U.edit, 'update public.appointments set related_appointment_id=$1 where id=$1', [test], /itself/);
+  // 단계
+  const insS = "insert into public.appointment_steps(family_id,patient_id,appointment_id,phase,kind,title,relative_minutes,sort) values ($1,$2,$3,$4,$5,$6,$7,1) returning id";
+  const s1 = (await rows(U.edit, insS, [f, pt, test, 'before', '금식', '금식 시작', -480]))[0].id;
+  const s2 = (await rows(U.edit, insS, [f, pt, test, 'during', '측정', '혈압·체중·신장 측정', null]))[0].id;
+  await fails(U.view, insS, [f, pt, test, 'during', '대기', '대기', null], /row-level security/);
+  await fails(U.edit, insS, [f, pt2, test, 'during', '대기', '다른 환자 일정에 붙이기', null], /row-level security/);
+  await fails(U.edit, insS, [f, pt, test, 'before', '금식', '범위 초과', -99999], /check/);
+  assert.equal((await rows(U.view, 'select * from public.appointment_steps where appointment_id=$1', [test])).length, 2);
+  assert.equal((await rows(U.none, 'select * from public.appointment_steps')).length, 0);
+  // 완료 체크: 등록 권한 이상만, 기록자 저장
+  await rows(U.edit, 'select public.set_step_done($1,true)', [s1]);
+  const done = (await sudo('select done_by, done_at from public.appointment_steps where id=$1', [s1]))[0];
+  assert.equal(done.done_by, U.edit); assert.ok(done.done_at);
+  await fails(U.view, 'select public.set_step_done($1,true)', [s2], /Not permitted/);
+  await fails(U.none, 'select public.set_step_done($1,true)', [s2], /Not permitted/);
+  await rows(U.edit, 'select public.set_step_done($1,false)', [s1]);
+  assert.equal((await sudo('select done_at from public.appointment_steps where id=$1', [s1]))[0].done_at, null);
+  // 열람자는 직접 수정·삭제 불가
+  assert.equal((await as(U.view, "update public.appointment_steps set title='변조' where id=$1", [s1])).affectedRows, 0);
+  assert.equal((await as(U.view, 'delete from public.appointment_steps where id=$1', [s1])).affectedRows, 0);
+  assert.equal((await as(U.edit, 'delete from public.appointment_steps where id=$1', [s2])).affectedRows, 1);
+  // 피드: 장소·준비는 포함, 의료진·예약번호·전화·수납·안내문 원문은 제외
+  const tok = (await rows(U.owner, 'select public.create_calendar_feed($1) as t', [f]))[0].t;
+  const feed = (await asRole('anon', 'select public.calendar_feed_data($1) as d', [tok]))[0].d;
+  const a = feed.appointments.find(x => x.id === test), flat = JSON.stringify(feed);
+  assert.equal(a.place, '별관 지하 2층'); assert.equal(a.fasting_hours, 8); assert.equal(a.kind, '검사'); assert.equal(a.steps_before.length, 1);
+  for (const secret of ['서우근', 'R-1', '02-000-0000', '12000', '원문']) assert.ok(!flat.includes(secret), secret + ' 노출 금지');
+  // 병원 정보
+  const insH = "insert into public.hospitals(family_id,name,address,phone,map_url) values ($1,$2,'서울 어딘가','02-123','https://map.example/x') returning id";
+  await rows(U.edit, insH, [f, '심뇌혈관병원']);
+  await fails(U.edit, insH, [f, '심뇌혈관병원'], /unique|duplicate/);
+  await fails(U.view, insH, [f, '다른병원'], /row-level security/);
+  await fails(U.edit, "insert into public.hospitals(family_id,name,map_url) values ($1,'위험','javascript:alert(1)')", [f], /check/);
+  assert.equal((await rows(U.view, 'select * from public.hospitals')).length, 1);
+  assert.equal((await rows(U.stranger, 'select * from public.hospitals')).length, 0);
+  assert.equal((await rows(U.none, 'select * from public.hospitals')).length, 1);
+});
+
+test('AI 설정: 관리자만 등록, 키는 Vault에만 저장·외부 노출 없음, 서비스 전용 조회, 한도', async () => {
+  const f = (await sudo("select family_id from public.family_groups g join public.family_members m on m.family_id=g.id where g.name='방문가족' limit 1"))[0].family_id;
+  const KEY = 'sk-ant-TEST-1234567890abcdefghij';
+  await fails(U.edit, "select public.set_ai_settings($1,'anthropic','claude-sonnet-5-5',$2)", [f, KEY], /Not permitted/);
+  await fails(U.owner, "select public.set_ai_settings($1,'evil','m',$2)", [f, KEY], /Invalid provider/);
+  await fails(U.owner, "select public.set_ai_settings($1,'anthropic','bad model!',$2)", [f, KEY], /Invalid model/);
+  await fails(U.owner, "select public.set_ai_settings($1,'anthropic','m','short')", [f], /Invalid API key/);
+  await fails(U.owner, "select public.set_ai_settings($1,'anthropic','claude-sonnet-5-5')", [f], /API key required/);
+  await rows(U.owner, "select public.set_ai_settings($1,'anthropic','claude-sonnet-5-5',$2,true,3)", [f, KEY]);
+  // 구성원 상태 조회: 키 없음
+  const st = (await rows(U.view, 'select public.ai_status($1) as s', [f]))[0].s;
+  assert.equal(st.configured, true); assert.equal(st.provider, 'anthropic'); assert.equal(st.model, 'claude-sonnet-5-5'); assert.equal(st.daily_limit, 3);
+  assert.ok(!JSON.stringify(st).includes('sk-ant'));
+  await fails(U.stranger, 'select public.ai_status($1)', [f], /Not permitted/);
+  // 일반 사용자는 설정·사용량 테이블/볼트에 접근 불가
+  for (const t of ['public.ai_settings', 'public.ai_usage']) await assert.rejects(() => as(U.owner, 'select * from ' + t), /permission denied/);
+  await assert.rejects(() => as(U.owner, 'select * from vault.decrypted_secrets'), /permission denied/);
+  await assert.rejects(() => asRole('anon', 'select public.ai_config_for_ocr($1,$2)', [f, U.owner]), /permission denied/);
+  await assert.rejects(() => as(U.owner, 'select public.ai_config_for_ocr($1,$2)', [f, U.owner]), /permission denied/);
+  // 서비스 롤: 승인 구성원은 키 수령, 비구성원 거부
+  const cfg = (await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.view]))[0].c;
+  assert.equal(cfg.ok, true); assert.equal(cfg.api_key, KEY); assert.equal(cfg.role, 'caregiver'); assert.equal(cfg.over_limit, false);
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.stranger]))[0].c.reason, 'not_member');
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.owner]))[0].c.role, 'owner');
+  // 사용량 한도(3회)
+  for (let i = 0; i < 3; i++) await asRole('service_role', "select public.log_ai_usage($1,$2,'ocr',true)", [f, U.view]);
+  await asRole('service_role', "select public.log_ai_usage($1,$2,'ocr',false,'err')", [f, U.view]); // 실패는 한도에 포함되지 않음
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.view]))[0].c.over_limit, true);
+  assert.equal((await rows(U.owner, 'select public.ai_status($1) as s', [f]))[0].s.used_24h, 3);
+  // 모델만 변경(키 유지), 공급자 변경 시 새 키 필요, 비활성화
+  await rows(U.owner, "select public.set_ai_settings($1,'anthropic','claude-haiku-5-5',null,true,50)", [f]);
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.edit]))[0].c.model, 'claude-haiku-5-5');
+  await fails(U.owner, "select public.set_ai_settings($1,'openai','gpt-x',null)", [f], /API key required when provider changes/);
+  await rows(U.owner, "select public.set_ai_settings($1,'anthropic','claude-haiku-5-5',null,false,50)", [f]);
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.edit]))[0].c.reason, 'disabled');
+  await rows(U.owner, "select public.set_ai_settings($1,'openai','gpt-test-model',$2,true,50)", [f, 'sk-OPENAI-TEST-0987654321zyxwv']);
+  assert.equal((await asRole('service_role', 'select public.ai_config_for_ocr($1,$2) as c', [f, U.edit]))[0].c.api_key, 'sk-OPENAI-TEST-0987654321zyxwv');
+  // 키 삭제: Vault에서 제거, 사용 불가
+  await fails(U.edit, 'select public.delete_ai_key($1)', [f], /Not permitted/);
+  await rows(U.owner, 'select public.delete_ai_key($1)', [f]);
+  assert.equal((await sudo('select count(*)::int c from vault.secrets'))[0].c, 0);
+  assert.equal((await rows(U.owner, 'select public.ai_status($1) as s', [f]))[0].s.configured, false);
+  // 가족 삭제 시 Vault 비밀도 정리
+  await rows(U.owner, "select public.set_ai_settings($1,'google','gemini-test',$2)", [f, 'AIza-TEST-KEY-1234567890abcdef']);
+  assert.equal((await sudo('select count(*)::int c from vault.secrets'))[0].c, 1);
+  await sudo('delete from public.family_groups where id=$1', [f]);
+  assert.equal((await sudo('select count(*)::int c from vault.secrets'))[0].c, 0);
 });
 
 test('계정 삭제: 유일 관리자는 소유권 이전 전까지 차단, 단독 가족은 함께 삭제', async () => {

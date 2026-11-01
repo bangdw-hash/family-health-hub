@@ -3,7 +3,7 @@ import {supabase} from '../lib/supabase.js';
 import {isSchemaOutdated} from '../lib/errors.js';
 import {addDays, todayStr} from '../lib/format.js';
 
-const EMPTY = {patients: [], appointments: [], medical_records: [], medications: [], med_intakes: [], attachments: [], patient_permissions: [], audit_logs: [], family_members: [], family_join_requests: []};
+const EMPTY = {appointment_steps: [], hospitals: [], patients: [], appointments: [], medical_records: [], medications: [], med_intakes: [], attachments: [], patient_permissions: [], audit_logs: [], family_members: [], family_join_requests: []};
 const QUERY = {
   patients: q => q.order('created_at', {ascending: true}).limit(500),
   appointments: q => q.order('visit_date', {ascending: false}).limit(2000),
@@ -15,11 +15,15 @@ const QUERY = {
   audit_logs: q => q.order('created_at', {ascending: false}).limit(200),
   family_members: q => q.limit(200),
   family_join_requests: q => q.eq('status', 'pending').limit(100),
+  appointment_steps: q => q.limit(5000),
+  hospitals: q => q.order('name', {ascending: true}).limit(500),
 };
+// 진료 확장(v0.5) 테이블: 서버가 아직 구버전이어도 앱 전체를 막지 않고 해당 기능만 숨깁니다.
+const OPTIONAL = new Set(['appointment_steps', 'hospitals']);
 
 /** 선택한 패밀리의 모든 데이터를 불러오고 실시간 변경을 반영합니다. 권한 필터링은 서버 RLS가 수행합니다. */
 export function useFamilyData(userId, familyId, {onError} = {}) {
-  const [data, setData] = useState(EMPTY), [loading, setLoading] = useState(false), [outdated, setOutdated] = useState(false);
+  const [data, setData] = useState(EMPTY), [loading, setLoading] = useState(false), [outdated, setOutdated] = useState(false), [visitsReady, setVisitsReady] = useState(true);
   const errRef = useRef(onError); errRef.current = onError;
   const timers = useRef({}), alive = useRef(0);
 
@@ -35,6 +39,8 @@ export function useFamilyData(userId, familyId, {onError} = {}) {
     const patch = {};
     for (const [n, r] of results) {
       if (r.error) {
+        if (OPTIONAL.has(n) && isSchemaOutdated(r.error)) { setVisitsReady(false); continue; }
+        if (OPTIONAL.has(n)) continue;
         if (isSchemaOutdated(r.error)) setOutdated(true);
         else if (n !== 'family_join_requests') errRef.current?.(r.error);
         continue;
@@ -53,7 +59,7 @@ export function useFamilyData(userId, familyId, {onError} = {}) {
 
   useEffect(() => {
     alive.current++;
-    setData(EMPTY); setOutdated(false);
+    setData(EMPTY); setOutdated(false); setVisitsReady(true);
     if (!familyId || !userId) return;
     setLoading(true);
     load().finally(() => setLoading(false));
@@ -65,5 +71,5 @@ export function useFamilyData(userId, familyId, {onError} = {}) {
   }, [familyId, userId, load, reload]);
 
   const me = useMemo(() => data.family_members.find(m => m.user_id === userId && m.status === 'approved') || null, [data.family_members, userId]);
-  return {data, loading, outdated, me, load, reload};
+  return {data, loading, outdated, visitsReady, me, load, reload};
 }

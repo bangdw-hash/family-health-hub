@@ -37,8 +37,11 @@ export function clipLines(text, max = 200) {
   return out.join('\n');
 }
 
-export function apptShareText(a, patientName, companionName) {
-  return [`[진료 일정] ${patientName}님`, `${fmtDate(a.visit_date, true)} ${fmtTime(a.visit_time) || '시간 미정'}`, `${a.hospital}${a.department ? ' ' + a.department : ''}`, `동행: ${companionName || '미정'}`].join('\n');
+export function apptShareText(a, patientName, companionName, prep = []) {
+  const tag = {'검사': '검사 일정', '시술·수술': '시술 일정', '입원': '입원 일정'}[a.kind] || '진료 일정';
+  const pre = [a.fasting_hours ? `${a.fasting_hours}시간 금식` : null, ...prep].filter(Boolean);
+  return [`[${tag}] ${patientName}님`, `${fmtDate(a.visit_date, true)} ${fmtTime(a.visit_time) || '시간 미정'}`, `${a.hospital}${a.department ? ' ' + a.department : ''}${a.test_name ? ' · ' + a.test_name : ''}`,
+    a.place && `장소: ${a.place}`, pre.length && `준비: ${pre.join(', ')}`, `동행: ${companionName || '미정'}`].filter(Boolean).join('\n');
 }
 /** items: [{patient, med, slot, by}] — by가 있으면 복용 확인됨 */
 export function medShareText(date, items) {

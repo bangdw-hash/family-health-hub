@@ -140,7 +140,10 @@ function useToday() {
 function FamilyApp({session, family, groups, ui, signOut, lockNow, setFamily, refreshGroups}) {
   const {toast, confirm} = useOverlay(), user = session.user;
   const fail = useCallback(e => toast(friendlyError(e), {kind: 'error'}), [toast]);
-  const {data, loading, outdated, me, load, reload} = useFamilyData(user.id, family.id, {onError: fail});
+  const {data, loading, outdated, visitsReady, me, load, reload} = useFamilyData(user.id, family.id, {onError: fail});
+  const [aiStatus, setAiStatus] = useState(null);
+  const refreshAi = useCallback(async () => { const {data: d, error} = await supabase.rpc('ai_status', {p_family: family.id}); setAiStatus(error ? null : {...d, familyId: family.id}); }, [family.id]);
+  useEffect(() => { refreshAi(); }, [refreshAi]);
   const nav = useNav(), online = useOnline(), today = useToday();
   const [sheetState, setSheetState] = useState(null);
   const sheet = useMemo(() => ({current: sheetState, open: (type, props = {}) => setSheetState({type, ...props}), close: () => setSheetState(null)}), [sheetState]);
@@ -157,10 +160,10 @@ function FamilyApp({session, family, groups, ui, signOut, lockNow, setFamily, re
 
   // 알림 일정 갱신(이 기기에서만, 사용자가 선택한 환자만)
   useEffect(() => {
-    const run = () => applySchedule(buildSchedule({appointments: data.appointments, medications: data.medications, patients, prefs: loadPrefs()})).catch(() => {});
+    const run = () => applySchedule(buildSchedule({appointments: data.appointments, medications: data.medications, steps: data.appointment_steps, patients, prefs: loadPrefs()})).catch(() => {});
     run(); addEventListener('fhh-reminders', run);
     return () => removeEventListener('fhh-reminders', run);
-  }, [data.appointments, data.medications, patients]);
+  }, [data.appointments, data.medications, data.appointment_steps, patients]);
 
   // 관리자 접속 시 30일 경과 휴지통 항목 자동 정리(하루 1회)
   useEffect(() => { if (isOwner && !loading && !outdated && shouldAutoPurge(family.id)) api.purgeTrash(30, data.attachments).catch(() => {}); }, [isOwner, loading, outdated]);
@@ -175,7 +178,7 @@ function FamilyApp({session, family, groups, ui, signOut, lockNow, setFamily, re
   const pendingCount = isOwner ? data.family_join_requests.filter(r => r.status === 'pending').length : 0;
   const ctx = {user, family, groups, setFamily, me, isOwner, members: data.family_members, data, patients, creatable, canAddPatient: canAdd(me), can, colorOf,
     patientById: id => data.patients.find(p => p.id === id), api, act, fail, toast, confirm, nav, sheet, today, ui, reload, lockNow, signOut,
-    visibleLogs: data.audit_logs, trashItem, signOutAfterLeave: () => { setFamily(null); refreshGroups(); }};
+    visibleLogs: data.audit_logs, trashItem, features: {visits: visitsReady}, ai: aiStatus && {...aiStatus, refresh: refreshAi}, refreshAi, signOutAfterLeave: () => { setFamily(null); refreshGroups(); }};
 
   const {tab, search, sub, patientId} = nav.state;
   if (outdated) return <main className="start"><div className="panel"><h1><DatabaseZap size={24}/> 서버 업데이트가 필요합니다</h1>
