@@ -12,7 +12,8 @@
     "mobile:ios": "npm run mobile:sync && npx cap open ios",
     "test:db": "node --test supabase/tests/rls.test.mjs",
     "test": "npm run test:unit && npm run test:db",
-    "test:unit": "node --test tests/*.test.mjs"
+    "test:unit": "node --test tests/*.test.mjs",
+    "bundle:feed": "node scripts/bundle-feed.mjs"
   },
   "dependencies": {
     "@capacitor/app": "7.1.0",

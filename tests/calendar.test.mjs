@@ -20,6 +20,7 @@ const medications = [
   {id: 'm2', patient_id: 'p2', name: '아주아주아주아주아주긴약이름'.repeat(4), times: ['12:00'], created_at: '2026-10-10T00:00:00Z'},
 ];
 const now = new Date('2026-11-01T00:00:00Z');
+const BS = String.fromCharCode(92);
 
 test('ICS: 형식·접기·이스케이프·상태·개인정보', () => {
   const ics = buildIcs({calName: '가족, 일정', patients, appointments, medications, options: {include_meds: true, show_med_names: true}, now});
@@ -30,7 +31,7 @@ test('ICS: 형식·접기·이스케이프·상태·개인정보', () => {
   assert.ok(ics.includes('DTSTART;VALUE=DATE:20261106') && ics.includes('DTEND;VALUE=DATE:20261107'), '시간 없는 일정은 종일');
   assert.ok(ics.includes('STATUS:CANCELLED'));
   assert.ok(!ics.includes('절대노출금지메모'), '일정 메모는 포함하지 않음');
-  assert.ok(ics.replace(/\r\n /g, '').includes('연세정형외과\\, 본관\; 3층'));
+  assert.ok(ics.replace(/\r\n /g, '').includes('연세정형외과' + BS + ', 본관' + BS + '; 3층'));
   assert.ok(ics.includes('RRULE:FREQ=DAILY;UNTIL=20261231T145959Z'), '한국 시각 12/31 23:59:59 = UTC 14:59:59');
   assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 3 + 3);
   assert.ok(ics.includes('SEQUENCE:'));
@@ -38,7 +39,7 @@ test('ICS: 형식·접기·이스케이프·상태·개인정보', () => {
   assert.ok(!noNames.includes('아모디핀') && noNames.includes('[복약] 김영희 · 08:00'));
   const noMeds = buildIcs({patients, appointments: [], medications, options: {include_meds: false}, now});
   assert.ok(!noMeds.includes('BEGIN:VEVENT'));
-  assert.equal(esc('a,b;c\\d\ne'), 'a\\,b\;c\\\\d\\ne');
+  assert.equal(esc('a,b;c' + BS + 'd\ne'), 'a' + BS + ',b' + BS + ';c' + BS + BS + 'd' + BS + 'ne');
   assert.equal(fold('가'.repeat(60)).split('\r\n').every(l => new TextEncoder().encode(l).length <= 75), true);
 });
 

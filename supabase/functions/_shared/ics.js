@@ -4,7 +4,8 @@ const pad = n => String(n).padStart(2, '0');
 const enc = new TextEncoder();
 export const TZ = 'Asia/Seoul';
 
-export function esc(s) { return String(s ?? '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/;/g, '\;').replace(/,/g, '\\,'); }
+const BS = String.fromCharCode(92); // 역슬래시
+export function esc(s) { return String(s ?? '').replace(/\\/g, BS + BS).replace(/\r?\n/g, BS + 'n').replace(/;/g, BS + ';').replace(/,/g, BS + ','); }
 /** 75 옥텟 접기. 멀티바이트 문자를 쪼개지 않습니다. */
 export function fold(line) {
   if (enc.encode(line).length <= 75) return line;

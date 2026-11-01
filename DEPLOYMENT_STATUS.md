@@ -39,3 +39,12 @@
 - 추가 마이그레이션 `supabase/migrations/20261101000000_collaboration.sql` **미적용**. 적용 전에는 앱이 "서버 업데이트가 필요합니다" 화면을 표시합니다.
 - 적용 후 확인: 테이블 `med_intakes`, `attachments`, `user_consents` 생성, Storage 버킷 `fhh-attachments`(비공개) 및 정책 3개, Realtime 게시 테이블, 함수 권한(anon 실행 불가).
 - 로컬 검증: `npm test`(단위 + RLS), `npm run build`.
+
+## 2026-11-01 적용 결과 (collaboration)
+- `20261101000000_collaboration.sql` 적용 완료(방시원님이 SQL Editor에서 실행). 테이블 3개, RPC 14개, 트리거 12개, 비공개 버킷 `fhh-attachments` + 정책 3개, 실시간 10개 테이블, anon 권한 0건 확인. 기존 환자 2건 보존.
+- 남은 경고: Auth "유출 비밀번호 보호"가 꺼져 있음(대시보드 Authentication 설정에서 켜야 함).
+
+## 2026-11-02 v0.4.0 (캘린더·카카오톡) — 적용 필요
+1. SQL Editor에서 `supabase/migrations/20261102000000_calendar_feeds.sql` 실행.
+2. 엣지 함수 `calendar-feed` 배포(Verify JWT 끔). 배포 후 `https://ynstvmzhtzokvllrnjtn.supabase.co/functions/v1/calendar-feed/<64자리 토큰>.ics` 형식으로 응답해야 함(잘못된 토큰은 404).
+3. 카카오 개발자 콘솔 → 앱 생성 → 플랫폼(Web)에 `https://bangdw-hash.github.io` 등록 → JavaScript 키를 GitHub Actions 변수 `FHH_KAKAO_JS_KEY`에 등록(콘솔 메뉴 이름은 변경될 수 있어 확인 필요).

@@ -1,13 +1,14 @@
 # Family Health Hub
 
-기준: 2026-11-01 · 웹앱 v0.3.0 · 다수 보호자 협업 기능 개발본
+기준: 2026-11-02 · 웹앱 v0.4.0 · 다수 보호자 협업 + 캘린더·카카오톡 연동
 
 환자 1명을 여러 보호자(가족·요양보호사 등)가 같은 권한 체계에서 함께 관리하는 가족 건강 관리 앱입니다.
 
 ## 구성
 - React + Vite 반응형 웹앱 (PC/모바일 브라우저), Capacitor 7 기반 Android/iOS 셸
 - Supabase Auth · PostgreSQL · RLS · Storage(비공개 버킷) · Realtime
-- 마이그레이션: `supabase/migrations/20261031000000_initial.sql`(적용됨) → **`20261101000000_collaboration.sql`(이번 버전, 적용 필요)**
+- 마이그레이션: `20261031000000_initial.sql`(적용됨) → `20261101000000_collaboration.sql`(적용됨) → **`20261102000000_calendar_feeds.sql`(이번 버전, 적용 필요)**
+- 엣지 함수: `supabase/functions/calendar-feed` (캘린더 구독 피드, 배포 필요)
 
 ## v0.3.0 주요 기능
 | 영역 | 내용 |
@@ -22,9 +23,21 @@
 | 안전 | 휴지통(되돌리기, 30일 후 자동 영구 삭제), 앱 잠금(PIN), 개인정보 동의, 계정 삭제, 오류 한글 안내, 오프라인 표시 |
 | 접근성 | 글자 4단계·버튼 크기 조절·고대비·다크 모드, 첫 실행 크기 선택, 키보드/스크린리더 대응(주요 화면 axe WCAG2 A/AA 위반 0건 확인) |
 
+## v0.4.0 외부 서비스 연동
+| 기능 | 방식 | 필요한 설정 |
+|---|---|---|
+| 구글·아이폰 캘린더 구독 | 구성원별 비밀 URL(.ics)을 캘린더가 주기적으로 가져감(진료 일정 + 복약 시간 반복 일정) | 마이그레이션 + 엣지 함수 배포 |
+| 일정 추가 | 진료 일정마다 "구글 캘린더에 추가" 링크, .ics 파일 받기 | 없음 |
+| 카카오톡 공유 | 카카오 JS SDK `Kakao.Share.sendDefault` (키가 없으면 기기 공유창, 최후에는 클립보드) | `VITE_KAKAO_JS_KEY` |
+- 외부로 나가는 내용: 환자 이름, 병원·진료과, 일시, 동행자, (선택) 복약 시간·약 이름. **진단명·증상·검사·메모는 내보내지 않습니다.**
+- 구독 URL은 로그인 없이 읽히는 비밀 링크입니다. 앱에서 재발급·해제할 수 있고, 패밀리에서 제거되면 즉시 중단됩니다. 반영 주기는 구글이 정하며 수 시간~하루가 걸릴 수 있습니다.
+- 구글 계정 OAuth 직접 동기화, 카카오 알림톡 자동 발송은 구현하지 않았습니다(요청 범위 밖).
+
 ## 실행
 1. Family Health Hub **전용** Supabase 프로젝트를 사용합니다(다른 서비스 DB에 적용 금지).
-2. 두 마이그레이션을 순서대로 SQL Editor에서 실행합니다. 2번째 파일은 재실행해도 안전합니다.
+2. 마이그레이션 3개를 순서대로 SQL Editor에서 실행합니다(2·3번째는 재실행해도 안전).
+   캘린더 구독을 쓰려면 엣지 함수도 배포합니다: `supabase functions deploy calendar-feed --no-verify-jwt --project-ref <프로젝트 ref>` 또는 `npm run bundle:feed` 로 만든 `deploy/calendar-feed.single.ts` 를 대시보드 Edge Functions 편집기에 붙여넣고 **Verify JWT를 끕니다**.
+   카카오 공유를 쓰려면 카카오 개발자 콘솔의 JavaScript 키를 `VITE_KAKAO_JS_KEY`(GitHub Actions 변수 `FHH_KAKAO_JS_KEY`)로 설정하고 웹 도메인을 등록합니다.
 3. `.env.example`을 `.env.local`로 복사하고 URL과 **publishable key**만 입력합니다(service_role 키 금지).
 4. `npm install && npm run dev`, 배포 전 `npm run build`.
 5. Supabase Auth의 Site URL·Redirect URL을 실제 배포 주소로 설정합니다.
@@ -34,7 +47,7 @@
 ## 테스트
 ```bash
 npm test          # 단위 테스트 + RLS 테스트
-npm run test:unit # 날짜·권한·ZIP·CSV·리포트·PIN·알림 계산
+npm run test:unit # 날짜·권한·ZIP·CSV·리포트·PIN·알림·ICS(표준 파서 icalendar 필요)·공유·피드 핸들러
 npm run test:db   # PGlite 위에서 실제 마이그레이션을 실행해 RLS/RPC 검증
 ```
 RLS 테스트 범위: 승인 전 접근 차단, 기본 접근 수준별 쓰기 권한, 비공개 환자, 환자별 명시 권한 우선, 가족 간 격리, 초대 코드 재발급, 복용 확인 위조·중복, 첨부 경로 규칙, 감사 로그 위조 차단, 관리자 보호(마지막 관리자·최대 2명), 휴지통 정리, 계정 삭제.
@@ -51,7 +64,8 @@ RLS 테스트 범위: 승인 전 접근 차단, 기본 접근 수준별 쓰기 �
 - 의료문서 OCR/AI 자동 입력, 음성 입력, 생체인증 잠금, 푸시 서버 알림, 오프라인 쓰기 대기열은 구현하지 않았습니다.
 - 복용 확인(med_intakes) 조회는 최근 14일입니다(내보내기도 동일).
 - 이전 Firebase 앱 데이터의 자동 이전은 하지 않았습니다.
-- 마이그레이션 `20261101000000_collaboration.sql`은 PGlite(Postgres WASM)로 검증했으며, **실제 Supabase 프로젝트에는 아직 적용하지 않았습니다**. 적용 후 Storage 정책(`fhh-attachments`)과 Realtime 게시 여부를 대시보드에서 확인하십시오.
+- `20261101000000_collaboration.sql`은 실제 프로젝트에 적용되어 점검했습니다. `20261102000000_calendar_feeds.sql`과 엣지 함수는 PGlite·단위 테스트로만 검증했고 **실제 프로젝트에는 아직 적용·배포하지 않았습니다**(커넥터 승인 창 미응답).
+- 구글 캘린더의 구독 URL 수신, 카카오 SDK 공유 창, 모바일 앱의 외부 브라우저·공유창 동작은 실제 키·기기에서 확인하지 못했습니다.
 - Android/iOS 실기기 동작, Storage 업로드, 실서버 알림 권한은 이 환경에서 검증하지 못했습니다.
 - 개인정보 동의 문안(`PRIVACY.md`)은 초안이며 법률 검토가 필요합니다.
 
