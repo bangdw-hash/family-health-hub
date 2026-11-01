@@ -3,6 +3,7 @@ import {useApp} from '../state.js';
 import {PatientForm, AppointmentForm, RecordForm, MedicationForm, AttachmentForm, PermissionSheet} from './forms.jsx';
 import {Sheet} from './ui.jsx';
 import ReportSheet from './ReportSheet.jsx';
+import ShareSheet from './ShareSheet.jsx';
 import {live} from './cards.jsx';
 import {Users, CalendarPlus, FileText, Pill, Paperclip} from 'lucide-react';
 import {compressImage, MAX_UPLOAD_BYTES} from '../lib/image.js';
@@ -62,6 +63,7 @@ export default function Sheets() {
     const patient = patients.find(x => x.id === p.patientId);
     return patient ? <PermissionSheet patient={patient} members={members} perms={data.patient_permissions} onClose={close} onSet={(uid, perm) => app.act(() => api.setPermission(patient.id, uid, perm))}/> : null;
   }
+  if (type === 'share') return <ShareSheet {...p} onClose={close}/>;
   if (type === 'report') return <ReportSheet patient={patients.find(x => x.id === p.patientId)} onClose={close}/>;
   return null;
 }

@@ -16,9 +16,11 @@
   },
   "dependencies": {
     "@capacitor/app": "7.1.0",
+    "@capacitor/browser": "7.0.5",
     "@capacitor/core": "7.4.4",
     "@capacitor/local-notifications": "7.0.3",
     "@capacitor/preferences": "7.0.2",
+    "@capacitor/share": "7.0.4",
     "@supabase/supabase-js": "2.57.0",
     "lucide-react": "0.468.0",
     "qrcode-generator": "^1.4.4",

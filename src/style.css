@@ -120,3 +120,5 @@ nav button.active{color:var(--primary);font-weight:800;background:var(--primary-
 @media print{header,nav,.fab,.toasts{display:none}}
 
 .menuitem b{word-break:keep-all}.badge{white-space:nowrap}
+
+.between{justify-content:space-between;flex-wrap:wrap}.inline.between p{margin:0}hr{border:0;border-top:1px solid var(--line);margin:14px 0}details{margin:10px 0}summary{cursor:pointer;font-weight:700}

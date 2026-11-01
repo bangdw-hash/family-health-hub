@@ -30,6 +30,7 @@ jobs:
           GITHUB_PAGES: 'true'
           VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_KAKAO_JS_KEY: ${{ vars.FHH_KAKAO_JS_KEY }}
       - name: Verify production configuration
         run: test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
         env:

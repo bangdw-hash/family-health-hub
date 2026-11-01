@@ -48,6 +48,8 @@ before(async () => {
   await db.exec(readFileSync(join(dir, '20261101000000_collaboration.sql'), 'utf8'));
   // 재실행 안전성(idempotent)
   await db.exec(readFileSync(join(dir, '20261101000000_collaboration.sql'), 'utf8'));
+  await db.exec(readFileSync(join(dir, '20261102000000_calendar_feeds.sql'), 'utf8'));
+  await db.exec(readFileSync(join(dir, '20261102000000_calendar_feeds.sql'), 'utf8'));
 });
 
 test('패밀리 생성과 코드 조회는 관리자에게만 허용된다', async () => {
@@ -269,6 +271,67 @@ test('휴지통 정리는 관리자만, 기간 경과분만 삭제', async () =>
   assert.equal((await rows(U.owner, 'select public.empty_trash($1,30) as n', [fam]))[0].n, 0);
   assert.ok((await rows(U.owner, 'select public.empty_trash($1,0) as n', [fam]))[0].n >= 1);
   assert.equal((await sudo('select count(*)::int c from public.appointments where id=$1', [ap]))[0].c, 0);
+});
+
+test('캘린더 구독 피드: 토큰 접근, 권한 범위, 회수', async () => {
+  // 위 테스트들에서 edit 구성원은 관리자로 승격되었다가 보호자로 복귀한 상태. 시나리오용 데이터를 새로 만든다.
+  const viewer = U.view, none = U.none;
+  await rows(U.owner, "select public.rotate_family_code($1)", [fam]);
+  const f2 = (await rows(U.owner, "select public.create_family('피드 가족','피드관리자') as r"))[0].r.family_id; // owner 소유 두 번째 가족
+  const pub = (await rows(U.owner, "insert into public.patients(family_id,name) values ($1,'공개환자') returning id", [f2]))[0].id;
+  const prv = (await rows(U.owner, "insert into public.patients(family_id,name,is_private) values ($1,'비공개환자',true) returning id", [f2]))[0].id;
+  for (const p of [pub, prv]) {
+    await rows(U.owner, "insert into public.appointments(family_id,patient_id,hospital,visit_date,visit_time,note,status) values ($1,$2,'피드병원',current_date + 3,'10:30','비밀메모','예약완료')", [f2, p]);
+    await rows(U.owner, "insert into public.medications(family_id,patient_id,name,times,dosage) values ($1,$2,'피드약','{08:00}','1정')", [f2, p]);
+  }
+  await rows(U.owner, "insert into public.medical_records(family_id,patient_id,visit_date,diagnosis,memo) values ($1,$2,current_date,'민감진단','민감메모')", [f2, pub]);
+  // 구성원 view 승인
+  await rows(U.stranger, 'select public.request_family_join((select code_plain from fhh_private.family_codes where family_id=$1),$2)', [f2, '낯선이']).catch(async () => {
+    const code = (await sudo('select code_plain c from fhh_private.family_codes where family_id=$1', [f2]))[0].c;
+    await rows(U.stranger, 'select public.request_family_join($1,$2)', [code, '낯선이']);
+  });
+  const rid = (await rows(U.owner, "select id from public.family_join_requests where family_id=$1 and status='pending'", [f2]))[0].id;
+  await rows(U.owner, "select public.approve_family_join($1,'view')", [rid]);
+
+  const tok = (await rows(U.owner, 'select public.create_calendar_feed($1) as t', [f2]))[0].t;
+  assert.match(tok, /^[0-9a-f]{64}$/);
+  // 익명은 토큰으로 피드를 읽을 수 있고, 관리자 피드에는 비공개 환자도 포함
+  const anon = async (sql, params) => { await db.exec('set role anon'); try { return (await db.query(sql, params)).rows; } finally { await db.exec('reset role'); } };
+  const feed = (await anon('select public.calendar_feed_data($1) as d', [tok]))[0].d;
+  assert.equal(feed.patients.length, 2); assert.equal(feed.appointments.length, 2); assert.equal(feed.medications.length, 2);
+  const flat = JSON.stringify(feed);
+  assert.ok(!flat.includes('비밀메모') && !flat.includes('민감진단') && !flat.includes('민감메모'), '진료 기록·메모는 피드에 없다');
+  assert.ok(feed.patients.every(p => p.name) && feed.calName.includes('피드 가족'));
+  // 열람 구성원 피드에는 비공개 환자가 없다
+  const vtok = (await rows(U.stranger, 'select public.create_calendar_feed($1,false,false) as t', [f2]))[0].t;
+  const vfeed = (await anon('select public.calendar_feed_data($1) as d', [vtok]))[0].d;
+  assert.deepEqual(vfeed.patients.map(p => p.name), ['공개환자']);
+  assert.equal(vfeed.appointments.length, 1); assert.equal(vfeed.medications.length, 0); assert.equal(vfeed.options.include_meds, false);
+  // 잘못된/없는 토큰
+  assert.equal((await anon('select public.calendar_feed_data($1) as d', ['0'.repeat(64)]))[0].d, null);
+  assert.equal((await anon("select public.calendar_feed_data($1) as d", ["x' or '1'='1"]))[0].d, null);
+  // 익명은 테이블·생성 함수에 접근 불가
+  await assert.rejects(() => anon('select * from public.calendar_feeds'), /permission denied/);
+  await assert.rejects(() => anon('select public.create_calendar_feed($1)', [f2]), /permission denied/);
+  // 타인은 내 피드 행을 못 본다
+  assert.equal((await rows(U.stranger, 'select * from public.calendar_feeds')).length, 1);
+  assert.equal((await rows(U.owner, 'select * from public.calendar_feeds')).length, 1);
+  // 비구성원은 만들 수 없다
+  await fails(U.none, 'select public.create_calendar_feed($1)', [f2], /Not permitted/);
+  // 옵션 변경(토큰 유지), 재발급(기존 토큰 무효), 제거 후 무효
+  await rows(U.owner, 'select public.update_calendar_feed($1,false,true,$2)', [f2, [pub]]);
+  const upd = (await anon('select public.calendar_feed_data($1) as d', [tok]))[0].d;
+  assert.deepEqual(upd.patients.map(p => p.name), ['공개환자']); assert.equal(upd.medications.length, 0);
+  const tok2 = (await rows(U.owner, 'select public.create_calendar_feed($1) as t', [f2]))[0].t;
+  assert.notEqual(tok2, tok);
+  assert.equal((await anon('select public.calendar_feed_data($1) as d', [tok]))[0].d, null);
+  assert.ok((await anon('select public.calendar_feed_data($1) as d', [tok2]))[0].d);
+  // 구성원 제거 시 피드 즉시 무효
+  await rows(U.owner, 'select public.remove_member($1,$2)', [f2, U.stranger]);
+  assert.equal((await anon('select public.calendar_feed_data($1) as d', [vtok]))[0].d, null);
+  await rows(U.owner, 'select public.delete_calendar_feed($1)', [f2]);
+  assert.equal((await anon('select public.calendar_feed_data($1) as d', [tok2]))[0].d, null);
+  assert.ok((await sudo('select count(*)::int c from public.calendar_feeds'))[0].c <= 1);
 });
 
 test('계정 삭제: 유일 관리자는 소유권 이전 전까지 차단, 단독 가족은 함께 삭제', async () => {

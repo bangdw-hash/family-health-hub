@@ -1,0 +1,3 @@
+# 이 저장소의 Supabase CLI 설정(엣지 함수만 사용). 프로젝트 ref는 `supabase link`로 연결합니다.
+[functions.calendar-feed]
+verify_jwt = false

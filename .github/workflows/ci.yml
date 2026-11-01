@@ -13,6 +13,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - run: pip install icalendar
       - run: npm test
       - run: npm run build
         env:

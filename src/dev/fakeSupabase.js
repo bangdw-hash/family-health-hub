@@ -29,6 +29,7 @@ export function createFakeSupabase() {
       {id: 'm0000000-0000-0000-0000-000000000001', family_id: FAM, patient_id: P1, name: '아모디핀', dosage: '5mg 1정', instructions: '식후', times: ['08:00', '20:00'], active: true, created_at: now(), deleted_at: null},
       {id: 'm0000000-0000-0000-0000-000000000002', family_id: FAM, patient_id: P2, name: '메트포르민', dosage: '500mg', instructions: '식사 중', times: [], active: true, created_at: now(), deleted_at: null}],
     med_intakes: empty ? [] : [{id: uid(), family_id: FAM, patient_id: P1, medication_id: 'm0000000-0000-0000-0000-000000000001', scheduled_date: d(0), slot: '08:00', status: 'taken', taken_by: SIS, taken_at: now()}],
+    calendar_feeds: [],
     attachments: [], audit_logs: empty ? [] : [
       {id: uid(), family_id: FAM, actor_id: SIS, action: 'update', entity: 'appointments', label: '서울대병원', patient_id: P1, created_at: now()},
       {id: uid(), family_id: FAM, actor_id: ME, action: 'create', entity: 'medications', label: '아모디핀', patient_id: P1, created_at: new Date(Date.now() - 3600e3).toISOString()}],
@@ -73,6 +74,9 @@ export function createFakeSupabase() {
     my_join_requests: () => [], request_family_join: () => FAM, cancel_family_join: () => null,
     approve_family_join: a => { const r = db.family_join_requests.find(x => x.id === a.p_request); if (r) { r.status = 'approved'; db.family_members.push({family_id: FAM, user_id: r.user_id, role: 'caregiver', status: 'approved', display_name: r.applicant_name, default_access: a.p_access}); } },
     reject_family_join: a => { const r = db.family_join_requests.find(x => x.id === a.p_request); if (r) r.status = 'rejected'; },
+    create_calendar_feed: a => { const t = (uid() + uid()).replace(/-/g, ''); db.calendar_feeds = [{id: uid(), user_id: me, family_id: a.p_family, token: t, include_meds: a.p_include_meds, show_med_names: a.p_show_med_names, patient_ids: a.p_patient_ids, last_fetched_at: null}]; return t; },
+    update_calendar_feed: a => { const f = db.calendar_feeds[0]; if (f) Object.assign(f, {include_meds: a.p_include_meds, show_med_names: a.p_show_med_names, patient_ids: a.p_patient_ids}); },
+    delete_calendar_feed: () => { db.calendar_feeds = []; },
     update_member: () => null, remove_member: () => null, update_my_profile: () => null, log_audit_event: () => null, empty_trash: () => 0, delete_my_account: () => null,
   };
   return {
