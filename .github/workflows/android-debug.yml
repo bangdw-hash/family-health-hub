@@ -28,6 +28,10 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: Build shared web assets
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_KAKAO_JS_KEY: ${{ vars.FHH_KAKAO_JS_KEY }}
       - name: Generate native Android project
         run: npx cap add android && npx cap sync android
       - name: Set beta Android version

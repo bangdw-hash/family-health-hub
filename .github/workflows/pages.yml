@@ -24,17 +24,20 @@ jobs:
         with:
           node-version: '20'
       - run: npm install --no-audit --no-fund
+      - name: Verify production configuration
+        run: |
+          test -n "$VITE_SUPABASE_URL" || { echo "::error::Missing Actions variable FHH_SUPABASE_URL"; exit 1; }
+          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY" || { echo "::error::Missing Actions variable FHH_SUPABASE_PUBLISHABLE_KEY"; exit 1; }
+        env:
+          VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
       - name: Build for GitHub Pages
         run: npm run build
         env:
           GITHUB_PAGES: 'true'
           VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
-      - name: Verify production configuration
-        run: test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
-        env:
-          VITE_SUPABASE_URL: ${{ vars.FHH_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.FHH_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_KAKAO_JS_KEY: ${{ vars.FHH_KAKAO_JS_KEY }}
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
         with:
