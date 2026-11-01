@@ -6,3 +6,4 @@ dist/
 .DS_Store
 android/
 ios/
+phone_dump/
