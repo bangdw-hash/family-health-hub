@@ -1,8 +1,9 @@
 name: CI
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [ccr-d22dfd19-juxqxs]
 jobs:
   test:
     runs-on: ubuntu-latest
