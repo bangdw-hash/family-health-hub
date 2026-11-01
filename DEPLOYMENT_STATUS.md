@@ -34,3 +34,8 @@
 ## Safety gate
 - Do not enter real medical records until patient permission administration, audit logging, export controls, storage policies, and account-to-patient linking have been implemented and tested.
 - GitHub repository is PUBLIC; do not commit private medical data or secrets.
+
+## 2026-11-01 업데이트 (v0.3.0)
+- 추가 마이그레이션 `supabase/migrations/20261101000000_collaboration.sql` **미적용**. 적용 전에는 앱이 "서버 업데이트가 필요합니다" 화면을 표시합니다.
+- 적용 후 확인: 테이블 `med_intakes`, `attachments`, `user_consents` 생성, Storage 버킷 `fhh-attachments`(비공개) 및 정책 3개, Realtime 게시 테이블, 함수 권한(anon 실행 불가).
+- 로컬 검증: `npm test`(단위 + RLS), `npm run build`.

@@ -29,7 +29,8 @@ Native folders are generated in CI and locally. Do not run `cap add` twice on th
 
 ## Mobile security and permissions
 - Do not embed service-role keys, database passwords or patient records in app source.
-- Native medication notifications must be scheduled only for the patient's own account/device, after patient identity is verified and permissions granted. Current code **does not schedule** medication reminders.
+- v0.3.0: 알림은 사용자가 설정 > 알림에서 직접 켠 기기에서, 사용자가 선택한 환자에 대해서만 로컬로 예약합니다(`src/lib/reminders.js`). 푸시 서버는 사용하지 않으며 앞으로 7일분을 예약하므로 앱을 가끔 열어 갱신해야 합니다. 기본값은 잠금 화면에 건강정보를 표시하지 않습니다. Android 13+ 알림 권한(POST_NOTIFICATIONS)과 iOS 알림 동작은 실기기 검증이 필요합니다.
+- 내보내기 파일은 모바일에서 공유 시트(Web Share)로 저장합니다. 실기기 확인 필요.
 - Current auth uses the Supabase JS default persisted session; production-grade secure token storage, account switching and cache cleanup are pending.
 - Android notification runtime permissions and iOS notification entitlements need device verification.
 - Medical images/files and export must be private, with RLS/Storage policies and audit trails before real patient data.

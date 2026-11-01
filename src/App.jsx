@@ -1,72 +1,209 @@
-import {installNativeLifecycle,isNativeApp} from './lib/platform';
-import {cancelMedicationNotifications} from './lib/mobileNotifications';
-import React,{useEffect,useState} from 'react';
-import {supabase,configured} from './lib/supabase';
-import {Home,CalendarDays,PlusCircle,Pill,FileText,Settings,LogOut,Users,Shield,ArrowLeft,RefreshCw} from 'lucide-react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {Home, Users, CalendarDays, Pill, Menu, Plus, Search as SearchIcon, RefreshCw, Lock as LockIcon, WifiOff, DatabaseZap} from 'lucide-react';
+import {supabase, configured} from './lib/supabase.js';
+import {installNativeLifecycle, isNativeApp, exitApp} from './lib/platform.js';
+import {cancelMedicationNotifications} from './lib/mobileNotifications.js';
+import {friendlyError} from './lib/errors.js';
+import {accessFor, canAddPatient as canAdd} from './lib/access.js';
+import {patientColor, todayStr} from './lib/format.js';
+import {hasPin, clearPin, autoLockMinutes} from './lib/lock.js';
+import {loadPrefs, buildSchedule, applySchedule, stopReminders} from './lib/reminders.js';
+import {CONSENT_VERSION} from './lib/consent.js';
+import {makeApi, shouldAutoPurge} from './lib/api.js';
+import {readJoinParam} from './lib/invite.js';
+import {OverlayProvider, useOverlay, closeTopSheet} from './components/ui.jsx';
+import Sheets from './components/Sheets.jsx';
+import {live} from './components/cards.jsx';
+import {AppCtx} from './state.js';
+import {useNav} from './hooks/useNav.js';
+import {useUiPrefs, fontClass} from './hooks/useUiPrefs.js';
+import {useFamilyData} from './hooks/useFamilyData.js';
+import {Login, PasswordRecovery, isRecoveryLink} from './pages/Auth.jsx';
+import {Welcome, Consent, LockScreen} from './pages/Gates.jsx';
+import FamilyStart from './pages/FamilyStart.jsx';
+import Today from './pages/Today.jsx';
+import Patients from './pages/Patients.jsx';
+import Schedule from './pages/Schedule.jsx';
+import Meds from './pages/Meds.jsx';
+import More from './pages/More.jsx';
+import Search from './pages/Search.jsx';
 
-const tabs=[['홈',Home],['캘린더',CalendarDays],['추가',PlusCircle],['복약',Pill],['기록',FileText]];
-const empty={patients:[],appointments:[],medical_records:[],medications:[]};
-function dateLocal(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
-function usePersisted(key,initial){const [value,setValue]=useState(()=>{try{return JSON.parse(localStorage.getItem(key))??initial}catch{return initial}});useEffect(()=>{localStorage.setItem(key,JSON.stringify(value))},[key,value]);return [value,setValue]}
-function authMessage(error){const code=error?.code||'';const msg=error?.message||'';if(code==='invalid_credentials'||/Invalid login credentials/i.test(msg))return '이메일 또는 비밀번호가 올바르지 않습니다. 기존 계정이라면 로그인하고, 비밀번호를 잊었다면 아래 비밀번호 재설정 기능을 이용하십시오.';if(code==='email_not_confirmed'||/Email not confirmed/i.test(msg))return '이메일 인증이 완료되지 않았습니다. 받은편지함과 스팸함에서 인증 메일을 확인하십시오.';if(code==='over_email_send_rate_limit'||/rate limit/i.test(msg))return '요청이 너무 많습니다. 잠시 후 다시 시도하십시오.';return msg||'요청 처리 중 오류가 발생했습니다.'}
-const AUTH_REDIRECT='https://bangdw-hash.github.io/family-health-hub/';
-function isRecoveryLink(){const values=new URLSearchParams(window.location.hash.slice(1));const query=new URLSearchParams(window.location.search);return values.get('type')==='recovery'||query.get('type')==='recovery'||query.has('token_hash')&&query.get('type')==='recovery'}
-function PasswordRecovery({onComplete}){const [password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);async function submit(e){e.preventDefault();if(password.length<8){setError('새 비밀번호는 8자 이상이어야 합니다.');return}if(password!==confirm){setError('비밀번호 확인이 일치하지 않습니다.');return}setBusy(true);setError('');const {error:err}=await supabase.auth.updateUser({password});setBusy(false);if(err){setError(authMessage(err));return}try{history.replaceState(null,'',window.location.pathname)}catch{}onComplete()}return <main className="auth"><div className="panel"><h1>새 비밀번호 설정</h1><p>복구 링크를 확인했습니다. 새로운 비밀번호를 입력하십시오.</p><form onSubmit={submit}><label>새 비밀번호<input type="password" autoComplete="new-password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required/></label><label>새 비밀번호 확인<input type="password" autoComplete="new-password" minLength={8} value={confirm} onChange={e=>setConfirm(e.target.value)} required/></label><button className="primary" disabled={busy}>{busy?'변경 중...':'비밀번호 변경'}</button></form>{error&&<p role="alert">{error}</p>}</div></main>}
+const TABS = [['today', '오늘', Home], ['patients', '환자', Users], ['schedule', '일정', CalendarDays], ['meds', '복약', Pill], ['more', '더보기', Menu]];
+const FONT_PX = {'작게': 14, '보통': 16, '크게': 19, '매우 크게': 22};
 
-function mailProviderUrl(email){
- const domain=(email.split('@')[1]||'').toLowerCase();
- if(domain==='gmail.com'||domain==='googlemail.com')return 'https://mail.google.com/';
- if(domain==='naver.com')return 'https://mail.naver.com/';
- if(domain==='daum.net'||domain==='hanmail.net'||domain==='kakao.com')return 'https://mail.daum.net/';
- if(domain==='outlook.com'||domain==='hotmail.com'||domain==='live.com')return 'https://outlook.live.com/mail/';
- if(domain==='icloud.com'||domain==='me.com'||domain==='mac.com')return 'https://www.icloud.com/mail/';
- if(domain==='yahoo.com'||domain==='yahoo.co.kr')return 'https://mail.yahoo.com/';
- return null;
+export default function App() { return <OverlayProvider><Root/></OverlayProvider>; }
+
+function Root() {
+  const {toast} = useOverlay(), ui = useUiPrefs();
+  const [recovery, setRecovery] = useState(isRecoveryLink), [session, setSession] = useState(null), [loading, setLoading] = useState(true);
+  const [locked, setLocked] = useState(hasPin), [consent, setConsent] = useState(undefined), [busy, setBusy] = useState(false);
+  const hiddenAt = useRef(0);
+
+  // 화면 설정을 문서 전체에 적용(로그인 화면 포함)
+  useEffect(() => {
+    const r = document.documentElement;
+    r.style.fontSize = (FONT_PX[ui.font] || 16) + 'px'; r.style.setProperty('--fhh-button-size', ui.buttonSize + 'px');
+    r.dataset.theme = ui.theme === '밝게' ? 'light' : ui.theme === '어둡게' ? 'dark' : 'auto'; r.dataset.contrast = ui.contrast ? 'high' : '';
+  }, [ui.font, ui.buttonSize, ui.theme, ui.contrast]);
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    if (readJoinParam()) { try { sessionStorage.setItem('fhh:join-code', readJoinParam()); } catch {} }
+    supabase.auth.getSession().then(({data}) => { setSession(data.session); setLoading(false); });
+    const {data: {subscription}} = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      setSession(s);
+      if (!s) { cancelMedicationNotifications().catch(() => {}); stopReminders(); setConsent(undefined); }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 개인정보 동의 여부 확인(서버 미적용·오프라인이면 차단하지 않음)
+  useEffect(() => {
+    if (!session) return;
+    let off = false;
+    supabase.from('user_consents').select('version').eq('user_id', session.user.id).eq('version', CONSENT_VERSION).maybeSingle()
+      .then(({data, error}) => { if (!off) setConsent(error ? true : !!data); });
+    return () => { off = true; };
+  }, [session?.user.id]);
+
+  // 앱 잠금: 백그라운드에 오래 머물면 잠급니다
+  useEffect(() => {
+    const away = () => { hiddenAt.current = Date.now(); };
+    const back = () => { if (hasPin() && hiddenAt.current && Date.now() - hiddenAt.current > autoLockMinutes() * 60000) setLocked(true); hiddenAt.current = 0; };
+    const vis = () => document.hidden ? away() : back();
+    document.addEventListener('visibilitychange', vis);
+    const off = installNativeLifecycle({onPause: away, onResume: back});
+    return () => { document.removeEventListener('visibilitychange', vis); off(); };
+  }, []);
+
+  const signOut = useCallback(async () => {
+    clearPin(); setLocked(false); stopReminders();
+    try { localStorage.removeItem('fhh:reminders'); localStorage.removeItem('fhh:last-family'); } catch {}
+    await cancelMedicationNotifications().catch(() => {});
+    await supabase.auth.signOut();
+  }, []);
+
+  if (!configured) return <main className="auth"><div className="panel"><h1>Family Health Hub</h1><p>Supabase 연결 설정이 필요합니다.</p><p>호스팅 환경변수 VITE_SUPABASE_URL 및 VITE_SUPABASE_PUBLISHABLE_KEY를 설정하십시오. 사용자에게 서버 키 입력을 요구하지 않습니다.</p></div></main>;
+  if (loading) return <main className="auth"><p role="status">로그인 확인 중...</p></main>;
+  if (recovery) return <PasswordRecovery onComplete={() => { setRecovery(false); toast('비밀번호가 변경되었습니다.'); }}/>;
+  if (!session) return <Login/>;
+  if (locked) return <LockScreen onUnlock={() => setLocked(false)} onSignOut={signOut}/>;
+  if (consent === undefined) return <main className="auth"><p role="status">확인 중...</p></main>;
+  if (consent === false) return <Consent busy={busy} onSignOut={signOut} onAccept={async () => {
+    setBusy(true);
+    const {error} = await supabase.from('user_consents').insert({user_id: session.user.id, version: CONSENT_VERSION});
+    setBusy(false);
+    if (error) toast(friendlyError(error), {kind: 'error'}); else setConsent(true);
+  }}/>;
+  if (!ui.onboarded) return <Welcome ui={ui} onDone={() => ui.setOnboarded(true)}/>;
+  return <Authed session={session} ui={ui} signOut={signOut} lockNow={() => setLocked(true)}/>;
 }
-function Login({onDone}){
- const [verificationEmail,setVerificationEmail]=useState(''),[mode,setMode]=useState('로그인'),[email,setEmail]=useState(()=>{try{return localStorage.getItem('fhh:remembered-email')||''}catch{return ''}}),[password,setPassword]=useState(''),[remember,setRemember]=useState(()=>{try{return localStorage.getItem('fhh:remember-email')==='yes'}catch{return false}}),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- function changeMode(next){setMode(next);setError('');setNotice('');setPassword('')}
- async function submit(e){e.preventDefault();if(busy)return;setBusy(true);setError('');setNotice('');try{
-  const normalized=email.trim().toLowerCase();
-  if(mode==='비밀번호 재설정'){const {error:err}=await supabase.auth.resetPasswordForEmail(normalized,{redirectTo:AUTH_REDIRECT});if(err)throw err;setVerificationEmail(normalized);setNotice('비밀번호 재설정 메일을 요청했습니다. 받은편지함과 스팸함을 확인하십시오. 메일의 링크는 서버에 등록된 이동 주소가 올바르게 설정되어 있어야 열립니다.');return}
-  if(mode==='회원가입'){const {data,error:err}=await supabase.auth.signUp({email:normalized,password});if(err)throw err;if(!data.session){setError('서버에서 이메일 확인을 요구하고 있습니다. Supabase Authentication → Sign In / Providers → Email에서 Confirm email을 비활성화한 뒤 다시 시도하십시오.');return}try{if(remember){localStorage.setItem('fhh:remember-email','yes');localStorage.setItem('fhh:remembered-email',normalized)}else{localStorage.removeItem('fhh:remember-email');localStorage.removeItem('fhh:remembered-email')}}catch{}setPassword('');setVerificationEmail('');setNotice('회원가입과 로그인이 완료되었습니다.');onDone();return}
-  const {error:err}=await supabase.auth.signInWithPassword({email:normalized,password});if(err)throw err;
-  try{if(remember){localStorage.setItem('fhh:remember-email','yes');localStorage.setItem('fhh:remembered-email',normalized)}else{localStorage.removeItem('fhh:remember-email');localStorage.removeItem('fhh:remembered-email')}}catch{}
-  setPassword('');onDone();
- }catch(err){setError(authMessage(err))}finally{setBusy(false)}}
- return <main className="auth"><div className="panel"><h1>Family Health Hub</h1><p>가족의 진료·복약·기록을 안전하게 함께 관리합니다.</p><div className="seg"><button type="button" className={mode==='로그인'?'selected':''} onClick={()=>changeMode('로그인')}>로그인</button><button type="button" className={mode==='회원가입'?'selected':''} onClick={()=>changeMode('회원가입')}>회원가입</button></div><form onSubmit={submit}><label>이메일<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" autoCapitalize="none"/></label>{mode!=='비밀번호 재설정'&&<label>비밀번호<input type="password" minLength={6} required value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==='회원가입'?'new-password':'current-password'}/></label>}{mode==='로그인'&&<label className="remember-login"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/> 이메일 저장하기</label>}<button className="primary" disabled={busy}>{busy?'처리 중...':mode==='비밀번호 재설정'?'재설정 메일 보내기':mode}</button></form>{mode==='로그인'&&<button type="button" onClick={()=>changeMode('비밀번호 재설정')}>비밀번호를 잊으셨습니까?</button>}{mode==='비밀번호 재설정'&&<button type="button" onClick={()=>changeMode('로그인')}>로그인으로 돌아가기</button>}{mode==='회원가입'&&<p>이메일 인증 없이 계정을 생성하고 바로 로그인합니다. 로그인 후 새 패밀리를 만들거나 기존 패밀리에 가입할 수 있습니다.</p>}{mode==='로그인'&&<p>로그인 상태는 기기에 유지됩니다. 이메일 저장은 선택 사항이며, 보안을 위해 비밀번호는 별도로 저장하지 않습니다.</p>}{verificationEmail&&<section className="mail-verification" aria-label="이메일 인증 안내"><h2>이메일 인증 안내</h2><p>{verificationEmail} 주소의 받은편지함과 스팸함에서 인증 메일을 확인하십시오.</p>{mailProviderUrl(verificationEmail)&&<a className="primary mail-link" href={mailProviderUrl(verificationEmail)} target="_blank" rel="noopener noreferrer">내 메일함 열기</a>}<p>회사·학교·개인 도메인 이메일은 평소 사용하는 메일 앱 또는 웹메일에서 확인하십시오. 메일함 열기는 편의 기능이며 실제 인증은 메일에 포함된 링크를 눌러 완료합니다.</p><button type="button" onClick={()=>changeMode('로그인')}>인증 후 로그인</button></section>}{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}</div></main>
+
+function Authed({session, ui, signOut, lockNow}) {
+  const {toast} = useOverlay(), uid = session.user.id;
+  const [groups, setGroups] = useState(null), [family, setFamilyState] = useState(null), didAuto = useRef(false);
+  const refreshGroups = useCallback(async () => {
+    const {data, error} = await supabase.from('family_members').select('family_id,role,status,family_groups(id,name)').eq('user_id', uid).eq('status', 'approved');
+    if (error) { toast(friendlyError(error), {kind: 'error'}); setGroups(g => g || []); return; }
+    setGroups(data || []);
+  }, [uid]);
+  useEffect(() => { refreshGroups(); }, [refreshGroups]);
+  const setFamily = useCallback(g => { setFamilyState(g); try { g ? localStorage.setItem('fhh:last-family', g.id) : null; } catch {} }, []);
+  useEffect(() => {
+    if (!groups) return;
+    if (!didAuto.current) {
+      didAuto.current = true;
+      const joining = !!sessionStorage.getItem('fhh:join-code');
+      let last = null; try { last = localStorage.getItem('fhh:last-family'); } catch {}
+      const pick = groups.find(g => g.family_id === last) || (groups.length === 1 && !joining ? groups[0] : null);
+      if (pick) setFamily(pick.family_groups);
+    }
+    if (family && !groups.some(g => g.family_id === family.id)) setFamilyState(null);
+  }, [groups]);
+  if (!groups) return <main className="auth"><p role="status">불러오는 중...</p></main>;
+  if (!family) return <FamilyStart user={session.user} groups={groups} onEnter={setFamily} onRefresh={refreshGroups} onSignOut={signOut} defaultName={session.user.user_metadata?.name || ''}/>;
+  return <FamilyApp key={family.id} session={session} family={family} groups={groups} ui={ui} signOut={signOut} lockNow={lockNow} setFamily={setFamily} refreshGroups={refreshGroups}/>;
 }
-function App(){const [recovery,setRecovery]=useState(()=>isRecoveryLink()),[requests,setRequests]=useState([]),[lastCode,setLastCode]=useState(''),[session,setSession]=useState(null),[loading,setLoading]=useState(true),[groups,setGroups]=useState([]),[group,setGroup]=useState(null),[tab,setTab]=useState('홈'),[data,setData]=useState(empty),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[buttonSize,setButtonSize]=usePersisted('fhh-button-size',44),[font,setFont]=usePersisted('fhh-font','보통'),[theme,setTheme]=usePersisted('fhh-theme','자동'),[name,setName]=useState(''),[code,setCode]=useState(''),[patient,setPatient]=useState(''),[showSettings,setShowSettings]=useState(false);
-useEffect(()=>{if(!supabase){setLoading(false);return}supabase.auth.getSession().then(({data})=>{setSession(data.session);setLoading(false)});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,s)=>{if(_event==='PASSWORD_RECOVERY')setRecovery(true);setSession(s);if(!s){cancelMedicationNotifications().catch(()=>{});setGroup(null);setGroups([]);setData(empty)}});return()=>subscription.unsubscribe()},[]);
-async function refreshRequests(){if(!group)return;const {data:rows,error}=await supabase.from('family_join_requests').select('*').eq('family_id',group.id).eq('status','pending');if(!error)setRequests(rows||[])}
-async function refreshGroups(){if(!session)return;const {data:rows,error}=await supabase.from('family_members').select('family_id,role,family_groups(id,name)').eq('user_id',session.user.id).eq('status','approved');if(error){setMessage(error.message);return}setGroups(rows||[]);if(group&&!rows?.some(r=>r.family_id===group.id)){setGroup(null);setData(empty)}}
-useEffect(()=>{refreshGroups()},[session?.user.id]);
-useEffect(()=>installNativeLifecycle({onResume:()=>{refreshGroups();refreshData()},onBack:()=>{if(showSettings)setShowSettings(false);else if(tab!=='홈')setTab('홈')}}),[session?.user.id,group?.id,tab,showSettings]);
-async function refreshData(){if(!group)return;const names=Object.keys(empty);const results=await Promise.all(names.map(n=>supabase.from(n).select('*').eq('family_id',group.id).order('created_at',{ascending:false}).limit(300)));const next={};results.forEach((r,i)=>{next[names[i]]=r.data||[];if(r.error)setMessage(r.error.message)});setData(next)}
-useEffect(()=>{refreshData();refreshRequests();if(!group)return;const channel=supabase.channel('fhh-'+group.id);Object.keys(empty).forEach(table=>channel.on('postgres_changes',{event:'*',schema:'public',table,filter:'family_id=eq.'+group.id},refreshData));channel.subscribe();return()=>{supabase.removeChannel(channel)}},[group?.id]);
-async function action(fn){setBusy(true);setMessage('');try{await fn()}catch(e){setMessage(e.message||String(e))}finally{setBusy(false)}}
-async function createFamily(){await action(async()=>{if(!name.trim())return;const {data:r,error}=await supabase.rpc('create_family',{p_name:name.trim()});if(error)throw error;setName('');setLastCode(r.invite_code);await refreshGroups();setMessage('패밀리가 생성되었습니다. 아래 발급 코드를 안전하게 전달하십시오.')})}
-async function approve(requestId){await action(async()=>{const {error}=await supabase.rpc('approve_family_join',{p_request:requestId});if(error)throw error;await refreshRequests();setMessage('가입을 승인했습니다. 환자별 권한은 별도로 부여해야 합니다.')})}
-async function rotateCode(){if(!confirm('기존 패밀리 코드를 즉시 무효화하고 새 코드를 발급하시겠습니까?'))return;await action(async()=>{const {data:next,error}=await supabase.rpc('rotate_family_code',{p_family:group.id});if(error)throw error;setLastCode(next);setMessage('새 패밀리 코드가 발급되었습니다. 이전 코드는 사용할 수 없습니다.')})}
-async function joinFamily(){await action(async()=>{const {error}=await supabase.rpc('request_family_join',{p_code:code.trim().toUpperCase(),p_name:name.trim()});if(error)throw error;setCode('');setMessage('가입 신청이 접수되었습니다. 주 관리자 승인 후 접근할 수 있습니다.')})}
-async function add(table,payload){await action(async()=>{const {error}=await supabase.from(table).insert({family_id:group.id,...payload});if(error)throw error;await refreshData();setMessage('저장되었습니다.')})}
-async function remove(table,id){if(!confirm('삭제하시겠습니까?'))return;await action(async()=>{const {error}=await supabase.from(table).update({deleted_at:new Date().toISOString()}).eq('id',id);if(error)throw error;await refreshData()})}
-if(!configured)return <main className="auth"><div className="panel"><h1>Family Health Hub</h1><p>Supabase 연결 설정이 필요합니다.</p><p>호스팅 환경변수 VITE_SUPABASE_URL 및 VITE_SUPABASE_PUBLISHABLE_KEY를 설정하십시오. 사용자에게 서버 키 입력을 요구하지 않습니다.</p></div></main>;
-if(loading)return <main className="auth">로그인 확인 중...</main>;
-if(recovery)return <PasswordRecovery onComplete={()=>{setRecovery(false);setMessage('비밀번호가 변경되었습니다.')}}/>;
-if(!session)return <Login onDone={()=>{}}/>;
-return <div style={{'--fhh-button-size':buttonSize+'px'}} className={'app '+(font==='매우 크게'?'font-xl':font==='크게'?'font-lg':font==='작게'?'font-sm':'')} data-theme={theme}>
-<header><div><strong>Family Health Hub</strong><small>{isNativeApp?'모바일 앱 · ':''}{group?.name||'패밀리를 선택하십시오'}</small></div><div className="actions"><button aria-label="새로고침" onClick={()=>{refreshGroups();refreshData()}}><RefreshCw size={20}/></button><button aria-label="설정" onClick={()=>setShowSettings(v=>!v)}><Settings size={20}/></button></div></header>
-{message&&<div className="notice" role="status">{message}<button onClick={()=>setMessage('')}>닫기</button></div>}
-{showSettings?<main><h2>설정</h2><section className="panel"><h3>계정</h3><p>{session.user.email}</p><button onClick={()=>supabase.auth.signOut()}><LogOut size={16}/> 로그아웃</button></section><section className="panel"><h3>화면 개인화</h3><label>글자 크기<select value={font} onChange={e=>setFont(e.target.value)}>{['작게','보통','크게','매우 크게'].map(x=><option key={x}>{x}</option>)}</select></label><label>버튼 크기 ({buttonSize}px)<input type="range" min="40" max="72" step="2" value={buttonSize} onChange={e=>setButtonSize(Number(e.target.value))}/></label><label>화면 모드<select value={theme} onChange={e=>setTheme(e.target.value)}>{['자동','밝게','어둡게'].map(x=><option key={x}>{x}</option>)}</select></label></section><section className="panel"><h3>패밀리 가입 관리</h3>{group&&<><button onClick={rotateCode}>고유 코드 재발급</button>{requests.map(r=><div className="item" key={r.id}><b>{r.applicant_name}</b><p>{r.phone||'연락처 미입력'} · {r.relationship||'관계 미입력'}</p><button onClick={()=>approve(r.id)}>가입 승인</button></div>)}</>}{lastCode&&<p className="code">발급 코드: <strong>{lastCode}</strong> <button onClick={()=>navigator.clipboard.writeText(lastCode)}>복사</button></p>}</section><section className="panel"><h3>패밀리 그룹</h3>{groups.map(x=><button className="rowButton" key={x.family_id} onClick={()=>{setGroup(x.family_groups);setShowSettings(false)}}>{x.family_groups?.name} · {x.role}</button>)}<button onClick={()=>{setGroup(null);setShowSettings(false)}}>그룹 생성·가입</button></section></main>:
-!group?<main><h2>패밀리 시작하기</h2><p>새 그룹을 만들거나 관리자가 전달한 고유 코드로 가입 신청하십시오.</p><section className="panel"><h3>내 패밀리</h3>{groups.length===0?<p>승인된 패밀리가 없습니다.</p>:groups.map(x=><button className="rowButton" key={x.family_id} onClick={()=>setGroup(x.family_groups)}>{x.family_groups?.name} · {x.role}</button>)}</section>{lastCode&&<section className="panel"><h3>발급된 패밀리 코드</h3><p className="code">{lastCode}</p><button onClick={()=>navigator.clipboard.writeText(lastCode)}>코드 복사</button></section>}<section className="panel"><h3>패밀리 생성</h3><label>패밀리 이름<input value={name} onChange={e=>setName(e.target.value)} placeholder="우리 가족"/></label><button className="primary" disabled={busy||!name.trim()} onClick={createFamily}>새 패밀리 만들기</button></section><section className="panel"><h3>고유 코드로 가입 신청</h3><label>패밀리 코드<input value={code} onChange={e=>setCode(e.target.value)} placeholder="고유 코드"/></label><label>신청자 이름<input value={name} onChange={e=>setName(e.target.value)}/></label><button className="primary" disabled={busy||!code.trim()||!name.trim()} onClick={joinFamily}>가입 신청</button></section></main>:
-<main><div className="topline"><button onClick={()=>setGroup(null)}><ArrowLeft size={16}/> 패밀리 전환</button><span>{group.name}</span></div>
-{tab==='홈'&&<><h2>가족 건강 현황</h2><div className="stats"><div className="panel"><strong>{data.patients.filter(x=>!x.deleted_at).length}</strong><small>관리 환자</small></div><div className="panel"><strong>{data.appointments.filter(x=>!x.deleted_at&&x.visit_date>=dateLocal()).length}</strong><small>예정 진료</small></div></div><section className="panel"><h3>환자</h3>{data.patients.filter(x=>!x.deleted_at).map(p=><button key={p.id} className="rowButton" onClick={()=>{setPatient(p.id);setTab('기록')}}>{p.name} · {p.relationship||'가족'}</button>)}</section><section className="panel"><h3>다가오는 진료</h3>{data.appointments.filter(x=>!x.deleted_at&&x.visit_date>=dateLocal()).sort((a,b)=>a.visit_date.localeCompare(b.visit_date)).slice(0,8).map(x=><div className="item" key={x.id}><b>{x.visit_date} {x.visit_time?.slice(0,5)}</b> {x.hospital} · {x.department}</div>)}</section></>}
-{tab==='캘린더'&&<><h2>진료 일정</h2><section className="panel">{data.appointments.filter(x=>!x.deleted_at).map(x=><div className="item" key={x.id}><b>{x.visit_date} {x.visit_time?.slice(0,5)}</b><p>{x.hospital} · {x.department} · {x.status}</p><button onClick={()=>remove('appointments',x.id)}>휴지통</button></div>)}</section></>}
-{tab==='추가'&&<><h2>새 항목 등록</h2><AddForms data={data} add={add}/></>}
-{tab==='복약'&&<><h2>복약 관리</h2><section className="panel"><label>환자 선택<select value={patient} onChange={e=>setPatient(e.target.value)}><option value="">전체 환자</option>{data.patients.filter(x=>!x.deleted_at).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>{data.medications.filter(x=>!x.deleted_at&&(!patient||x.patient_id===patient)).map(x=><div className="item" key={x.id}><b>{x.name}</b><p>{x.dosage} · {x.instructions}</p><button onClick={()=>remove('medications',x.id)}>중단/삭제</button></div>)}</section></>}
-{tab==='기록'&&<><h2>진료 기록</h2><section className="panel"><label>환자 선택<select value={patient} onChange={e=>setPatient(e.target.value)}><option value="">전체 환자</option>{data.patients.filter(x=>!x.deleted_at).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>{data.medical_records.filter(x=>!x.deleted_at&&(!patient||x.patient_id===patient)).map(x=><div className="item" key={x.id}><b>{x.visit_date}</b><p>{x.diagnosis||'진료 기록'} · {x.memo}</p><button onClick={()=>remove('medical_records',x.id)}>휴지통</button></div>)}</section></>}
-</main>}
-{!showSettings&&group&&<nav aria-label="주 메뉴">{tabs.map(([label,Icon])=><button key={label} className={tab===label?'active':''} onClick={()=>setTab(label)}><Icon size={22}/><span>{label}</span></button>)}</nav>}</div>}
-function AddForms({data,add}){const [type,setType]=useState('patients'),[p,setP]=useState(''),[a,setA]=useState(''),[b,setB]=useState(''),[c,setC]=useState('');const types=[['patients','환자'],['appointments','진료 일정'],['medical_records','진료 기록'],['medications','복약 계획']];async function save(e){e.preventDefault();const payload=type==='patients'?{name:a,relationship:b,birth_date:c||null}:type==='appointments'?{patient_id:p,hospital:a,department:b,visit_date:c,status:'예약완료'}:type==='medical_records'?{patient_id:p,diagnosis:a,memo:b,visit_date:c}: {patient_id:p,name:a,dosage:b,instructions:c};await add(type,payload);setA('');setB('');setC('')}return <section className="panel"><div className="seg">{types.map(([v,label])=><button key={v} className={type===v?'selected':''} onClick={()=>{setType(v);setA('');setB('');setC('')}}>{label}</button>)}</div><form onSubmit={save}>{type!=='patients'&&<label>환자<select required value={p} onChange={e=>setP(e.target.value)}><option value="">환자 선택</option>{data.patients.filter(x=>!x.deleted_at).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>}<label>{type==='patients'?'환자 이름':type==='appointments'?'병원':type==='medical_records'?'진단':'약품명'}<input required value={a} onChange={e=>setA(e.target.value)}/></label><label>{type==='patients'?'관계':type==='appointments'?'진료과':type==='medical_records'?'메모':'용량'}<input value={b} onChange={e=>setB(e.target.value)}/></label><label>{type==='patients'?'생년월일':type==='appointments'?'진료일':type==='medical_records'?'진료일':'복용 방법'}<input type={type==='medications'?'text':'date'} required={type!=='medications'} value={c} onChange={e=>setC(e.target.value)}/></label><button className="primary">저장</button></form></section>}
-export default App;
+
+function useOnline() {
+  const [on, setOn] = useState(typeof navigator === 'undefined' || navigator.onLine !== false);
+  useEffect(() => { const a = () => setOn(true), b = () => setOn(false); addEventListener('online', a); addEventListener('offline', b); return () => { removeEventListener('online', a); removeEventListener('offline', b); }; }, []);
+  return on;
+}
+function useToday() {
+  const [t, setT] = useState(todayStr);
+  useEffect(() => { const i = setInterval(() => setT(todayStr()), 60000); return () => clearInterval(i); }, []);
+  return t;
+}
+
+function FamilyApp({session, family, groups, ui, signOut, lockNow, setFamily, refreshGroups}) {
+  const {toast, confirm} = useOverlay(), user = session.user;
+  const fail = useCallback(e => toast(friendlyError(e), {kind: 'error'}), [toast]);
+  const {data, loading, outdated, me, load, reload} = useFamilyData(user.id, family.id, {onError: fail});
+  const nav = useNav(), online = useOnline(), today = useToday();
+  const [sheetState, setSheetState] = useState(null);
+  const sheet = useMemo(() => ({current: sheetState, open: (type, props = {}) => setSheetState({type, ...props}), close: () => setSheetState(null)}), [sheetState]);
+  const api = useMemo(() => makeApi({familyId: family.id, userId: user.id, reload}), [family.id, user.id, reload]);
+  const isOwner = me?.role === 'owner';
+  const patients = useMemo(() => live(data.patients), [data.patients]);
+  const can = useCallback((pid, op) => { const p = data.patients.find(x => x.id === pid); return !!p && accessFor(me, p, data.patient_permissions)[op]; }, [me, data.patients, data.patient_permissions]);
+  const creatable = useMemo(() => patients.filter(p => can(p.id, 'create')), [patients, can]);
+  const colorOf = useCallback(pid => { const i = data.patients.findIndex(p => p.id === pid); return patientColor(data.patients[i], Math.max(i, 0)); }, [data.patients]);
+  const act = useCallback(async fn => { try { return await fn(); } catch (e) { fail(e); } }, [fail]);
+  const trashItem = useCallback(async (table, id, label) => {
+    try { await api.trash(table, id); toast(`'${label}' 항목을 휴지통으로 이동했습니다.`, {action: {label: '되돌리기', onClick: () => api.restore(table, id).catch(fail)}}); } catch (e) { fail(e); }
+  }, [api, toast, fail]);
+
+  // 알림 일정 갱신(이 기기에서만, 사용자가 선택한 환자만)
+  useEffect(() => {
+    const run = () => applySchedule(buildSchedule({appointments: data.appointments, medications: data.medications, patients, prefs: loadPrefs()})).catch(() => {});
+    run(); addEventListener('fhh-reminders', run);
+    return () => removeEventListener('fhh-reminders', run);
+  }, [data.appointments, data.medications, patients]);
+
+  // 관리자 접속 시 30일 경과 휴지통 항목 자동 정리(하루 1회)
+  useEffect(() => { if (isOwner && !loading && !outdated && shouldAutoPurge(family.id)) api.purgeTrash(30, data.attachments).catch(() => {}); }, [isOwner, loading, outdated]);
+
+  // 네이티브 뒤로가기 / 재진입 시 갱신
+  const navRef = useRef(nav); navRef.current = nav;
+  useEffect(() => installNativeLifecycle({
+    onResume: () => { refreshGroups(); load(); },
+    onBack: () => { if (closeTopSheet()) return; const n = navRef.current; if (!n.atRoot) n.back(); else if (n.state.tab !== 'today') n.tab('today'); else exitApp(); },
+  }), [load, refreshGroups]);
+
+  const pendingCount = isOwner ? data.family_join_requests.filter(r => r.status === 'pending').length : 0;
+  const ctx = {user, family, groups, setFamily, me, isOwner, members: data.family_members, data, patients, creatable, canAddPatient: canAdd(me), can, colorOf,
+    patientById: id => data.patients.find(p => p.id === id), api, act, fail, toast, confirm, nav, sheet, today, ui, reload, lockNow, signOut,
+    visibleLogs: data.audit_logs, trashItem, signOutAfterLeave: () => { setFamily(null); refreshGroups(); }};
+
+  const {tab, search, sub, patientId} = nav.state;
+  if (outdated) return <main className="start"><div className="panel"><h1><DatabaseZap size={24}/> 서버 업데이트가 필요합니다</h1>
+    <p>이 앱 버전은 새 데이터베이스 구조를 사용합니다. 서버 관리자가 <code>supabase/migrations/20261101000000_collaboration.sql</code> 을 Supabase SQL Editor에서 실행한 뒤 새로고침하십시오.</p>
+    <button type="button" className="primary" onClick={() => location.reload()}>새로고침</button><button type="button" onClick={() => setFamily(null)}>패밀리 전환</button></div></main>;
+
+  const Page = search ? Search : tab === 'patients' ? Patients : tab === 'schedule' ? Schedule : tab === 'meds' ? Meds : tab === 'more' ? More : Today;
+  const showFab = !search && !sub && tab !== 'more';
+  return <AppCtx.Provider value={ctx}>
+    <div className="app">
+      <a className="skip" href="#main">본문으로 건너뛰기</a>
+      <header>
+        <div className="brand"><strong>{family.name}</strong><small>{isNativeApp ? '모바일 앱 · ' : ''}{me ? (isOwner ? '관리자' : '보호자') + ' · ' + (me.display_name || '') : '확인 중...'}</small></div>
+        <div className="actions">
+          <button type="button" className="icon-btn" aria-label="검색" onClick={() => nav.go({search: true})}><SearchIcon size={20}/></button>
+          <button type="button" className="icon-btn" aria-label="새로고침" onClick={() => { refreshGroups(); load(); toast('최신 상태로 갱신했습니다.'); }}><RefreshCw size={20}/></button>
+          {hasPin() && <button type="button" className="icon-btn" aria-label="앱 잠그기" onClick={lockNow}><LockIcon size={20}/></button>}
+        </div>
+      </header>
+      {!online && <div className="offline" role="status"><WifiOff size={16}/> 오프라인입니다. 저장은 연결된 뒤에 가능합니다.</div>}
+      <main id="main" tabIndex={-1}>
+        {loading && !data.patients.length && <p role="status" className="muted">불러오는 중...</p>}
+        <Page/>
+      </main>
+      {showFab && <button type="button" className="fab" aria-label="새 항목 추가" onClick={() => sheet.open('quick', {defaultPatient: patientId || ''})}><Plus size={28}/></button>}
+      <nav aria-label="주 메뉴">{TABS.map(([id, label, Icon]) => <button type="button" key={id} className={tab === id && !search ? 'active' : ''} aria-current={tab === id && !search ? 'page' : undefined} onClick={() => nav.tab(id)}>
+        <Icon size={22} aria-hidden="true"/><span>{label}</span>{id === 'more' && pendingCount > 0 && <i className="nbadge" aria-label={`승인 대기 ${pendingCount}건`}>{pendingCount}</i>}</button>)}</nav>
+      <Sheets/>
+    </div>
+  </AppCtx.Provider>;
+}
